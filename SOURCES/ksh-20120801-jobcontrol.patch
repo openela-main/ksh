@@ -1,0 +1,47 @@
+From 27909acb584aed231d757d1d63c6c62b57c8e152 Mon Sep 17 00:00:00 2001
+From: Vincent Mihalkovic <vmihalko@redhat.com>
+Date: Mon, 3 Jan 2022 14:03:20 +0100
+Subject: [PATCH] Fix race conditions running external commands with job
+ control on
+
+When ksh is compiled with SHOPT_SPAWN (the default), which uses
+posix_spawn(3) or vfork(2) (via sh_ntfork()) to launch external
+commands, at least two race conditions occur when launching
+external commands while job control is active. See:
+https://bugs.launchpad.net/ubuntu/+source/ksh/+bug/1887863/comments/3
+https://www.mail-archive.com/ast-developers@research.att.com/msg00717.html
+
+The basic issue is that this performance optimisation is
+incompatible with job control, because it uses a spawning mechanism
+that doesn't copy the parent process' memory pages into the child
+process, therefore no state that involves memory can be set before
+exec-ing the external program. This makes it impossible to
+correctly set the terminal's process group ID in the child process,
+something that is essential for job control to work.
+
+src/cmd/ksh93/sh/xec.c:
+- Use sh_fork() instead of sh_ntfork() if job control is active.
+  This uses fork(2), which is 30%-ish slower on most sytems, but
+  allows for correctly setting the terminal process group.
+
+Fixes: https://github.com/ksh93/ksh/issues/79
+---
+ src/cmd/ksh93/sh/xec.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/cmd/ksh93/sh/xec.c b/src/cmd/ksh93/sh/xec.c
+index ae13178..be57a6b 100644
+--- a/src/cmd/ksh93/sh/xec.c
++++ b/src/cmd/ksh93/sh/xec.c
+@@ -1737,7 +1737,7 @@ int sh_exec(register const Shnode_t *t, int flags)
+ #else
+ #if SHOPT_SPAWN
+ #   ifdef _lib_fork
+-				if(com)
++				if(com && !job.jobcontrol)
+ 					parent = sh_ntfork(shp,t,com,&jobid,ntflag);
+ 				else
+ 					parent = sh_fork(shp,type,&jobid);
+-- 
+2.31.1
+
