@@ -1,0 +1,151 @@
+diff --git a/src/cmd/ksh93/bltins/cd_pwd.c b/src/cmd/ksh93/bltins/cd_pwd.c
+index e441805..715171c 100644
+--- a/src/cmd/ksh93/bltins/cd_pwd.c
++++ b/src/cmd/ksh93/bltins/cd_pwd.c
+@@ -91,8 +91,6 @@ int	b_cd(int argc, char *argv[],Shbltin_t *context)
+	oldpwd = path_pwd(shp,0);
+	opwdnod = sh_scoped(shp,OLDPWDNOD);
+	pwdnod = sh_scoped(shp,PWDNOD);
+-	if(oldpwd == e_dot && pwdnod->nvalue.cp)
+-		oldpwd = (char*)pwdnod->nvalue.cp;  /* if path_pwd() failed to get the pwd, use $PWD */
+	if(shp->subshell)
+	{
+		opwdnod = sh_assignok(opwdnod,1);
+@@ -116,7 +114,7 @@ int	b_cd(int argc, char *argv[],Shbltin_t *context)
+	if(shp->subshell && !shp->subshare)
+	{
+ #if _lib_fchdir
+-		if(!test_inode(nv_getval(pwdnod),e_dot))
++		if(!test_inode(shp->pwd,e_dot))
+ #endif
+			sh_subfork();
+	}
+@@ -221,6 +219,7 @@ success:
+	if(*dp && (*dp!='.'||dp[1]) && strchr(dir,'/'))
+		sfputr(sfstdout,dir,'\n');
+	nv_putval(opwdnod,oldpwd,NV_RDONLY);
++        free((void*)shp->pwd);
+	if(*dir == '/')
+	{
+		flag = strlen(dir);
+@@ -229,16 +228,12 @@ success:
+			dir[flag] = 0;
+		nv_putval(pwdnod,dir,NV_RDONLY);
+		nv_onattr(pwdnod,NV_EXPORT);
+-		if(shp->pwd)
+-			free((void*)shp->pwd);
+-		shp->pwd = sh_strdup(pwdnod->nvalue.cp);
++		shp->pwd = sh_strdup(dir);
+	}
+	else
+	{
+		/* pathcanon() failed to canonicalize the directory, which happens when 'cd' is invoked from a
+		   nonexistent PWD with a relative path as the argument. Reinitialize $PWD as it will be wrong. */
+-		if(shp->pwd)
+-			free((void*)shp->pwd);
+		shp->pwd = NIL(const char*);
+		path_pwd(shp,0);
+		if(*shp->pwd != '/')
+@@ -279,7 +274,7 @@ int	b_pwd(int argc, char *argv[],Shbltin_t *context)
+		errormsg(SH_DICT,ERROR_usage(2),"%s",optusage((char*)0));
+		UNREACHABLE();
+	}
+-	if(*(cp = path_pwd(shp,0)) != '/')
++	if(*(cp = path_pwd(shp,0)) != '/' || !test_inode(cp,e_dot))
+	{
+		errormsg(SH_DICT,ERROR_system(1), e_pwd);
+		UNREACHABLE();
+diff --git a/src/cmd/ksh93/data/msg.c b/src/cmd/ksh93/data/msg.c
+index 5cec66d..ee44e81 100644
+--- a/src/cmd/ksh93/data/msg.c
++++ b/src/cmd/ksh93/data/msg.c
+@@ -82,7 +82,7 @@ const char e_badpattern[]	= "%s: invalid shell pattern";
+ const char e_noread[]		= "%s: pattern seek requires read access";
+ const char e_logout[]		= "Use 'exit' to terminate this shell";
+ const char e_exec[]		= "%s: cannot execute";
+-const char e_pwd[]		= "cannot access parent directories";
++const char e_pwd[]		= "determine present working directory";
+ const char e_found[]		= "%s: not found";
+ #ifdef ENAMETOOLONG
+ const char e_toolong[]		= "%s: file name too long";
+diff --git a/src/cmd/ksh93/sh/path.c b/src/cmd/ksh93/sh/path.c
+index eb18d8c..c097b5f 100644
+--- a/src/cmd/ksh93/sh/path.c
++++ b/src/cmd/ksh93/sh/path.c
+@@ -249,7 +249,12 @@ char *path_pwd(Shell_t *shp,int flag)
+	NOT_USED(flag);
+	/* Don't bother if PWD already set */
+	if(shp->pwd)
+-		return((char*)shp->pwd);
++        {
++                if(*shp->pwd=='/')
++                        return((char*)shp->pwd);
++                free((void*)shp->pwd);
++
++        }
+	/* First see if PWD variable is correct */
+	pwdnod = sh_scoped(shp,PWDNOD);
+	cp = nv_getval(pwdnod);
+@@ -261,22 +266,29 @@ char *path_pwd(Shell_t *shp,int flag)
+		cp = nv_getval(sh_scoped(shp,HOME));
+		if(!(cp && *cp=='/' && test_inode(cp,e_dot)))
+		{
+-			/* Get physical PWD (no symlinks) using getcwd(3), fall back to "." */
++			/* Get physical PWD (no symlinks) using getcwd(3) */
+			cp = getcwd(NIL(char*),0);
+-			if(!cp)
+-				return((char*)e_dot);
+-			tofree++;
++                        if(cp)
++                                tofree++;
+		}
+		/* Store in PWD variable */
+-		if(shp->subshell)
+-			pwdnod = sh_assignok(pwdnod,1);
+-		nv_putval(pwdnod,cp,NV_RDONLY);
++                if(cp)
++                {
++                        if(shp->subshell)
++                                pwdnod = sh_assignok(pwdnod,1);
++                        nv_putval(pwdnod,cp,NV_RDONLY);
++                }
+		if(tofree)
+-			free(cp);
++			free((void*)cp);
+	}
+	nv_onattr(pwdnod,NV_EXPORT);
++        /* Neither obtained the pwd nor can fall back to sane-ish $PWD: fall back to "." */
++        if(!cp)
++                cp = nv_getval(pwdnod);
++        if(!cp || *cp!='/')
++                nv_putval(pwdnod,cp=(char*)e_dot,NV_RDONLY);
+	/* Set shell PWD */
+-	shp->pwd = sh_strdup(pwdnod->nvalue.cp);
++	shp->pwd = sh_strdup(cp);
+	return((char*)shp->pwd);
+ }
+
+diff --git a/src/cmd/ksh93/tests/path.sh b/src/cmd/ksh93/tests/path.sh
+index 4b2a97d..2da7d1f 100755
+--- a/src/cmd/ksh93/tests/path.sh
++++ b/src/cmd/ksh93/tests/path.sh
+@@ -902,5 +902,19 @@ got=$?
+ [[ $exp == $got ]] || err_exit "Test 7E: exit status or error message for exec'd command with long name wrong" \
+	"(expected $exp, got $got)"
+
++# ======
++# Crash after unsetting PWD
++(unset PWD; (cd /); :) &	# the : avoids optimizing out the subshell
++wait "$!" 2>/dev/null
++((!(e = $?))) || err_exit "shell crashes on 'cd' in subshell exit with unset PWD" \
++	"(got status $e$( ((e>128)) && print -n /SIG && kill -l "$e"))"
++mkdir "$tmp/testdir"
++cd "$tmp/testdir"
++"$SHELL" -c 'cd /; rmdir "$1"' x "$tmp/testdir"
++(unset PWD; exec "$SHELL" -c '(cd /); :') &
++wait "$!" 2>/dev/null
++((!(e = $?))) || err_exit 'shell crashes on failure obtain the PWD on init' \
++	"(got status $e$( ((e>128)) && print -n /SIG && kill -l "$e"))"
++
+ # ======
+ exit $((Errors<125?Errors:125))
