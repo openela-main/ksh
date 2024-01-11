@@ -8,7 +8,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      %{verBetaPrefix}~beta.%{verBetaSuffix}
-Release:      2%{?dist}
+Release:      3%{?dist}
 Source0:      https://github.com/ksh93/%{name}/archive/v%{verBetaFull}/%{name}-%{verBetaFull}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -16,6 +16,8 @@ Source3:      dotkshrc
 
 # temporary commenting out failing tests
 Patch1:       %{name}-%{verBetaFull}-regre-tests.patch
+# https://github.com/ksh93/ksh/commit/11177d448dadc7f8300e1db60c4ea5bdd61f13e0
+Patch2:       %{name}-%{verBetaFull}-unset-PWD-segfault.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -141,6 +143,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Tue Jun 27 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.0~beta.1-3
+- fix segfault when PWD is unset
+  Resolves: #2123066
+
 * Mon Aug 09 2021 Mohan Boddu <mboddu@redhat.com> - 3:1.0.0~beta.1-2
 - Rebuilt for IMA sigs, glibc 2.34, aarch64 flags
   Related: rhbz#1991688
