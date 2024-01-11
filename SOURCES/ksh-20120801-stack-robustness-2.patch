@@ -1,0 +1,12 @@
+diff -up ksh-20120801/src/lib/libast/misc/stk.c.orig ksh-20120801/src/lib/libast/misc/stk.c
+--- ksh-20120801/src/lib/libast/misc/stk.c.orig	2022-01-31 16:06:11.923069379 -0300
++++ ksh-20120801/src/lib/libast/misc/stk.c	2022-01-31 16:06:54.896802455 -0300
+@@ -76,7 +76,7 @@ struct frame
+ struct stk
+ {
+ 	_stk_overflow_	stkoverflow;	/* called when malloc fails */
+-	short		stkref;	/* reference count; */
++	int		stkref;	        /* reference count; */
+ 	short		stkflags;	/* stack attributes */
+ 	char		*stkbase;	/* beginning of current stack frame */
+ 	char		*stkend;	/* end of current stack frame */
