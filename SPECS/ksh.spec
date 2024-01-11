@@ -4,9 +4,9 @@
 Name:         ksh
 Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
-License:      EPL
+License:      EPL-1.0
 Version:      %{releasedate}
-Release:      257%{?dist}
+Release:      259%{?dist}
 Source0:      http://www.research.att.com/~gsf/download/tgz/ast-ksh.%{release_date}.tgz
 Source1:      http://www.research.att.com/~gsf/download/tgz/INIT.%{release_date}.tgz
 Source2:      kshcomp.conf
@@ -73,6 +73,7 @@ Patch35: ksh-20120801-fd2lost.patch
 
 # sent upstream 2014-01, rhbz#1047507
 Patch36: ksh-20120801-argvfix.patch
+
 
 # for ksh <= 2014-01-14, rhbz#1048995
 Patch37: ksh-20120801-memlik3.patch
@@ -231,6 +232,10 @@ Patch92: ksh-20120801-stack-robustness.patch
 # upstream commit: https://github.com/ksh93/ksh/commit/56805b25af24f454cdd477609bcddc984628bc01
 Patch93: ksh-20120801-stack-robustness-2.patch
 
+# rhbz#2013909
+# upstream commit: https://github.com/ksh93/ksh/commit/6f3b23e6f4d59590a51bfbcc66dc60082728b71d
+Patch94: ksh-20120801-segfault-long-command.patch
+
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils, chkconfig
@@ -264,8 +269,9 @@ sed -i '/-c sh\/main.c/s|${mam_cc_FLAGS} |${mam_cc_FLAGS} ${CCFLAGS} |p' src/cmd
 sed -i 1i"#define register" src/lib/libast/include/ast.h
 
 %build
+# rhbz#2226653: -D_std_malloc (disable vmalloc and force use of the operating system's malloc)
 XTRAFLAGS=""
-for f in -Wno-unknown-pragmas -Wno-missing-braces -Wno-unused-result -Wno-return-type -Wno-int-to-pointer-cast -Wno-parentheses -Wno-unused -Wno-unused-but-set-variable -Wno-cpp -P
+for f in -D_std_malloc -Wno-unknown-pragmas -Wno-missing-braces -Wno-unused-result -Wno-return-type -Wno-int-to-pointer-cast -Wno-parentheses -Wno-unused -Wno-unused-but-set-variable -Wno-cpp -P
 do
   gcc $f -E - </dev/null >/dev/null 2>&1 && XTRAFLAGS="$XTRAFLAGS $f"
 done
@@ -384,6 +390,15 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Fri Aug 25 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-259
+- Fix crash on trying a very long command
+  Fix license tag
+  Resolves: #2013909
+
+* Wed Jul 26 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-258
+- disable vmalloc and force use of the operating system's malloc
+  Resolves: #2226653
+
 * Mon Aug 08 2022 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-257
 - Stack robustness fixes (two patches)
   Resolves: #2116372
