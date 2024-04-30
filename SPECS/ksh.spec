@@ -1,23 +1,30 @@
-%global       verBetaPrefix 1.0.0
-%global       verBetaSuffix 1
-%global       verBetaFull %{verBetaPrefix}-beta.%{verBetaSuffix}
-
 Name:         ksh
 Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
-Version:      %{verBetaPrefix}~beta.%{verBetaSuffix}
+Version:      1.0.6
 Release:      3%{?dist}
-Source0:      https://github.com/ksh93/%{name}/archive/v%{verBetaFull}/%{name}-%{verBetaFull}.tar.gz
+Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
 Source3:      dotkshrc
 
-# temporary commenting out failing tests
-Patch1:       %{name}-%{verBetaFull}-regre-tests.patch
-# https://github.com/ksh93/ksh/commit/11177d448dadc7f8300e1db60c4ea5bdd61f13e0
-Patch2:       %{name}-%{verBetaFull}-unset-PWD-segfault.patch
+# The alarm builtin hase been temporarily removed from ksh in version 1.0.0.
+# To prevent customer regressions we revert following upstream commits:
+# https://github.com/ksh93/ksh/commit/4d50b69cbd5fce91d1f3c527dc170e192ceb4760
+# https://github.com/ksh93/ksh/commit/b369f40ded0ec7e8dd3d4a0e7226ccf037bb3400
+# https://github.com/ksh93/ksh/commit/3688842b7291db6fccdb44ff8e99ab8d4c1b2508
+Patch1:       %{name}-1.0.6-alarm-1.patch
+# alarm builtin was removed as it was unclear if it could ever be fixed
+# alarm fixing patch from https://github.com/ksh93/ksh/issues/422#issuecomment-1581168550
+Patch2:       %{name}-1.0.6-alarm-2.patch
+
+#https://github.com/ksh93/ksh/commit/2075b2b96208ac8b989ca316dcdd674c3f488e2b
+Patch3:       %{name}-1.0.7-history-trim.patch
+
+#upstream commit: https://github.com/ksh93/ksh/commit/9eb8532ccacf1cfdb7ba18f51eba68776852ef7c.patch
+Patch4: ksh-1.0.7-segfault-strdup.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -38,23 +45,20 @@ KornShell is a shell programming language, which is upward compatible
 with "sh" (the Bourne Shell).
 
 %prep
-%autosetup -n %{name}-%{verBetaFull} -p1
+%autosetup -p1
 
 #/dev/fd test does not work because of mock
 sed -i 's|ls /dev/fd|ls /proc/self/fd|' src/cmd/ksh93/features/options
 
-# disable register for debugging
-sed -i 1i"#define register" src/lib/libast/include/ast.h
-
 %build
-%set_build_flags
 XTRAFLAGS=""
-for f in -Wno-unknown-pragmas -Wno-missing-braces -Wno-unused-result -Wno-return-type -Wno-int-to-pointer-cast -Wno-parentheses -Wno-unused -Wno-unused-but-set-variable -Wno-cpp -Wno-maybe-uninitialized -Wno-lto-type-mismatch -P
+for f in -Wno-unknown-pragmas -Wno-missing-braces -Wno-unused-result -Wno-return-type -Wno-int-to-pointer-cast -Wno-parentheses -Wno-unused -Wno-unused-but-set-variable -Wno-cpp -Wno-maybe-uninitialized -Wno-lto-type-mismatch
 do
   $CC $f -E - </dev/null >/dev/null 2>&1 && XTRAFLAGS="$XTRAFLAGS $f"
 done
-export CCFLAGS="$RPM_OPT_FLAGS $RPM_LD_FLAGS -fno-strict-aliasing $XTRAFLAGS"
-./bin/package make -S
+export CCFLAGS="$RPM_OPT_FLAGS -fno-strict-aliasing $XTRAFLAGS"
+export LDFLAGS="$RPM_LD_FLAGS"
+./bin/package make
 
 %install
 mkdir -p %{buildroot}{/bin,%{_bindir},%{_mandir}/man1}
@@ -143,6 +147,19 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Sat Feb 10 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-3
+- Fix segfault in strdup
+  Resolves: RHEL-25019
+
+* Wed Jan 03 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-2
+- Fix crash on failure to trim ~/.sh_history (#20345)
+
+* Mon Sep 18 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-1
+- Rebase to non-beta version, because upstream says it should to be used
+  https://github.com/ksh93/ksh/issues/667#issuecomment-1653665697
+- fix acl test case regression
+  Resolves: #2034188
+
 * Tue Jun 27 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.0~beta.1-3
 - fix segfault when PWD is unset
   Resolves: #2123066
