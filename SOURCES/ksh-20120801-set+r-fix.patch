@@ -1,0 +1,57 @@
+From 74b4162178c8a2347491b9fd3a22d8e6e1b7e831 Mon Sep 17 00:00:00 2001
+From: Johnothan King <johnothanking@protonmail.com>
+Date: Wed, 10 Jun 2020 10:19:41 -0700
+Subject: [PATCH] Fix `set +r` so that it cannot unset the restricted option
+
+The ksh man page documents that the restricted option cannot be
+unset once it is set, which means `set +r` should be invalid.
+While this was true for `set +o restricted`, `set +r` was causing
+the restricted option to be unset. The fix for this problem comes
+from one of Solaris' patches, which adds an error check to prevent
+this behavior.
+
+Solaris' patch:
+https://github.com/oracle/solaris-userland/blob/master/components/ksh93/patches/020-CR6919590.patch
+
+src/cmd/ksh93/sh/args.c:
+ - Add an error check to stop `set +r` from unsetting the
+   restricted option.
+
+src/cmd/ksh93/tests/restricted.sh:
+ - Add two regression tests to make sure the restricted option
+   cannot be unset.
+
+(cherry picked from commit bef4fee404d8e24b38fce66420c14a39ac4a123e)
+---
+ src/cmd/ksh93/sh/args.c           | 2 ++
+ src/cmd/ksh93/tests/restricted.sh | 6 ++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/src/cmd/ksh93/sh/args.c b/src/cmd/ksh93/sh/args.c
+index a4a11012d90a..70bcabea680d 100644
+--- a/src/cmd/ksh93/sh/args.c
++++ b/src/cmd/ksh93/sh/args.c
+@@ -302,6 +302,8 @@ int sh_argopts(int argc,register char *argv[], void *context)
+ 		}
+ 		else
+ 		{
++			if ((o == SH_RESTRICTED) && sh_isoption(SH_RESTRICTED))
++				errormsg(SH_DICT,ERROR_exit(1),e_restricted,"r"); /* set -r cannot be unset */
+ 			if(o==SH_XTRACE)
+ 				trace = 0;
+ 			off_option(&newflags,o);
+diff --git a/src/cmd/ksh93/tests/restricted.sh b/src/cmd/ksh93/tests/restricted.sh
+index abf33cc82c04..eb32c01bb62e 100755
+--- a/src/cmd/ksh93/tests/restricted.sh
++++ b/src/cmd/ksh93/tests/restricted.sh
+@@ -87,4 +87,10 @@ for i in PATH ENV FPATH
+ do	check_restricted  "function foo { typeset $i=foobar;};foo" || err_exit "$i can be changed in function by using typeset"
+ done
+ 
++# ======
++# `set +r` and `set +o restricted` should not unset the restricted option
++check_restricted 'set +r' 2> /dev/null || err_exit '`set +r` unsets the restricted option'
++check_restricted 'set +o restricted' 2> /dev/null || err_exit '`set +o restricted` unsets the restricted option'
++
++# ======
+ exit $((Errors<125?Errors:125))

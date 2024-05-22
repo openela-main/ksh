@@ -1,0 +1,121 @@
+From 70f6d758c0f2fda90bc3d49331397ffd62dca3af Mon Sep 17 00:00:00 2001
+From: Martijn Dekker <martijn@inlv.org>
+Date: Thu, 30 Jul 2020 01:22:11 +0100
+Subject: [PATCH] Fix blocked signals after fork(2)ing external command in
+ subshell
+
+When the classic fork/exec mechanism was used (via sh_fork()) to
+run an external command from within a non-forking subshell, SIGINT
+was blocked until that subshell was exited. If a subsequent loop
+was run in the subshell, it became uninterruptible, e.g.:
+
+   $ arch/*/bin/ksh -c '(/usr/bin/true; while :; do :; done); exit'
+   ^C^C^C^C^C
+
+src/cmd/ksh93/sh/xec.c:
+- sh_fork() did not reset the savesig variable in the parent part
+  of the fork when running in a virtual subshell. This had the
+  effect of delaying signal handling until exiting the subshell.
+  There is no reason for that subshell check that I can discern, so
+  this removes it.
+      I've verified that this causes no regression test failures
+  even when ksh is compiled with -DSHOPT_SPAWN=0 which means the
+  classic fork/exec mechanism is always used.
+
+Fixes: https://github.com/ksh93/ksh/issues/86
+
+Cherry-picked-by: Lukáš Zaoral <lzaoral@redhat.com>
+Upstream-commit: 70f6d758c0f2fda90bc3d49331397ffd62dca3af
+---
+ src/cmd/ksh93/sh/xec.c          | 11 ++++-------
+ 1 file changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/src/cmd/ksh93/sh/xec.c b/src/cmd/ksh93/sh/xec.c
+index a6ad50747548..baa8d6d1287a 100644
+--- a/src/cmd/ksh93/sh/xec.c
++++ b/src/cmd/ksh93/sh/xec.c
+@@ -2951,13 +2951,10 @@ pid_t sh_fork(Shell_t *shp,int flags, int *jobid)
+ 	shp->savesig = -1;
+ 	while(_sh_fork(shp,parent=fork(),flags,jobid) < 0);
+ 	sh_stats(STAT_FORKS);
+-	if(!shp->subshell)
+-	{
+-		sig = shp->savesig;
+-		shp->savesig = 0;
+-		if(sig>0)
+-			kill(getpid(),sig);
+-	}
++	sig = shp->savesig;
++	shp->savesig = 0;
++	if(sig>0)
++		kill(getpid(),sig);
+ 	job_fork(parent);
+ 	return(parent);
+ }
+
+
+From 91a7c2e3e9feb8ac1391146ebcda9e6adfcd3cfb Mon Sep 17 00:00:00 2001
+From: Martijn Dekker <martijn@inlv.org>
+Date: Mon, 27 Dec 2021 03:00:15 +0000
+Subject: [PATCH] Fix crash/freeze upon interrupting command substitution with
+ pipe
+
+On some systems (at least Linux and macOS):
+
+1. Run on a command line: t=$(sleep 10|while :; do :; done)
+2. Press Ctrl+C in the first 10 seconds.
+3. Execute any other command substitution. The shell crashes.
+
+Analysis: Something in the job_wait() call in the sh_subshell()
+restore routine may be interrupted by a signal such as SIGINT on
+Linux and macOS. Exactly what that interruptible thing is remains
+to be determined. In any case, since job_wait() was invoked after
+sh_popcontext(), interrupting it caused the sh_subshell() restore
+routine to be aborted, resulting in an inconsistent state of the
+shell. The fix is to sh_popcontext() at a later stage instead.
+
+src/cmd/ksh93/sh/subshell.c: sh_subshell():
+- Move the sh_popcontext() call to near the end, just after
+  decreasing the subshell level counters and restoring the global
+  subshell data struct to its parent. This seems like a logical
+  place for it and could allow other things to be interrupted, too.
+- Get rid of the if(shp->subshell) because it is known that the
+  value is > 0 at this point.
+- The short exit routine run if the subshell forked now needs a new
+  sh_popcontext() call, because this is handled before restoring
+  the virtual subshell state.
+
+Fixes: https://github.com/ksh93/ksh/issues/397
+
+Cherry-picked-by: Lukáš Zaoral <lzaoral@redhat.com>
+Upstream-commit: 91a7c2e3e9feb8ac1391146ebcda9e6adfcd3cfb
+---
+ src/cmd/ksh93/sh/subshell.c     | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/src/cmd/ksh93/sh/subshell.c b/src/cmd/ksh93/sh/subshell.c
+@@ -681,10 +681,10 @@ Sfio_t *sh_subshell(Shell_t *shp,Shnode_t *t, volatile int flags, int comsub)
+ 		sh_trap(trap,0);
+ 		free(trap);
+ 	}
+-	sh_popcontext(shp,&buff);
+ 	if(shp->subshell==0)	/* must be child process */
+ 	{
+ 		subshell_data = sp->prev;
++		sh_popcontext(shp,&buff);
+ 		if(jmpval==SH_JMPSCRIPT)
+ 			siglongjmp(*shp->jmplist,jmpval);
+ 		shp->exitval &= SH_EXITMASK;
+@@ -886,10 +886,10 @@ Sfio_t *sh_subshell(Shell_t *shp,Shnode_t *t, volatile int flags, int comsub)
+ #if SHOPT_COSHELL
+ 	shp->coshell = sp->coshell;
+ #endif /* SHOPT_COSHELL */
+-	if(shp->subshell)
+-		SH_SUBSHELLNOD->nvalue.s = --shp->subshell;
++	SH_SUBSHELLNOD->nvalue.s = --shp->subshell;
+	subshell = shp->subshell;
+ 	subshell_data = sp->prev;
++	sh_popcontext(shp,&buff);
+ 	if(!argsav  ||  argsav->dolrefcnt==argcnt)
+ 		sh_argfree(shp,argsav,0);
+ 	if(shp->topfd != buff.topfd)

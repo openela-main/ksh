@@ -6,7 +6,7 @@ Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Version:      %{releasedate}
-Release:      259%{?dist}
+Release:      267%{?dist}
 Source0:      http://www.research.att.com/~gsf/download/tgz/ast-ksh.%{release_date}.tgz
 Source1:      http://www.research.att.com/~gsf/download/tgz/INIT.%{release_date}.tgz
 Source2:      kshcomp.conf
@@ -104,9 +104,6 @@ Patch45: ksh-20140415-hokaido.patch
 
 # for ksh < 2012-10-04, rhbz#1121960
 Patch46: ksh-20120801-tpstl.patch
-
-# sent upstream, rhbz#1100215
-Patch47: ksh-20120801-manfix4.patch
 
 # not upstream yet, rhbz#1100215
 Patch48: ksh-20120801-fununset.patch
@@ -236,6 +233,30 @@ Patch93: ksh-20120801-stack-robustness-2.patch
 # upstream commit: https://github.com/ksh93/ksh/commit/6f3b23e6f4d59590a51bfbcc66dc60082728b71d
 Patch94: ksh-20120801-segfault-long-command.patch
 
+# rhbz#1948588
+# upstream commit: https://github.com/ksh93/ksh/commit/74b4162178c8a2347491b9fd3a22d8e6e1b7e831
+Patch95: ksh-20120801-set+r-fix.patch
+
+# RHEL-11982
+# upstream commit: https://github.com/ksh93/ksh/commit/9eb8532ccacf1cfdb7ba18f51eba68776852ef7c.patch
+Patch96: ksh-20120801-segfault-strdup.patch
+
+# RHEL-12011
+# upstream commit: https://github.com/ksh93/ksh/commit/035a4cb3f453271b7ae63bcb53a7963b8dbe4c41
+Patch97: ksh-20120801-segfault-cd-paths.patch
+
+# RHEL-5684
+# upstream commit: https://github.com/ksh93/ksh/commit/f9d28935bb93fe7336ba8c5eab4231050de2e11e
+Patch98: ksh-20120801-xtrace-utf8-quoting.patch
+
+# RHEL-5685
+# upstream commit: https://github.com/ksh93/ksh/commit/2075b2b96208ac8b989ca316dcdd674c3f488e2b
+Patch99: %{name}-1.0.7-history-trim.patch
+
+# RHEL-11650
+# upstream commit: https://github.com/ksh93/ksh/commit/70f6d758c0f2fda90bc3d49331397ffd62dca3af
+# upstream commit: https://github.com/ksh93/ksh/commit/91a7c2e3e9feb8ac1391146ebcda9e6adfcd3cfb
+Patch100: ksh-20120801-subshell-interrupt-segv.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils, chkconfig
@@ -390,6 +411,35 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Fri Feb 09 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-267
+- Re-fix segfault in strdup
+  Resolves: RHEL-11982
+
+* Thu Jan 25 2024 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-266
+- fix crashes when interrupting subshells (RHEL-11650)
+
+* Wed Jan 03 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-265
+- Fix crash on failure to trim ~/.sh_history (RHEL-5685)
+
+* Wed Nov 22 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-264
+- Remove broken monitor patch
+
+* Thu Nov 09 2023 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-263
+- fix UTF-8 quoting in xtrace
+  Resolves: RHEL-5684
+
+* Wed Nov 08 2023 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-262
+- fix segfault in subshell if $PATH contains a .paths directory
+  Resolves: RHEL-12011
+
+* Tue Oct 31 2023 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-261
+- Fix segfault in strdup
+  Resolves: RHEL-11982
+
+* Mon Sep 18 2023 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-260
+- Fix set +r so that it cannot unset the restricted option
+  Resolves: #1948588
+
 * Fri Aug 25 2023 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-259
 - Fix crash on trying a very long command
   Fix license tag

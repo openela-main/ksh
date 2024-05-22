@@ -1,0 +1,141 @@
+From f9d28935bb93fe7336ba8c5eab4231050de2e11e Mon Sep 17 00:00:00 2001
+From: Martijn Dekker <martijn@inlv.org>
+Date: Fri, 10 Jul 2020 01:38:13 +0100
+Subject: [PATCH] Fix UTF-8 shellquoting for xtrace, printf %q, etc.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This fixes an annoying issue in the shell's quoting algorithm
+(used for xtrace (set -x), printf %q, and other things) for UTF-8
+locales, that caused it to encode perfectly printable UTF-8
+characters unnecessarily and inconsistently. For example:
+
+$ (set -x; : 'aeu aéu')
++ : $'aeu a\u[e9]u'
+$ (set -x; : 'aéu aeu')
++ : 'aéu aeu'
+$ (set -x; : '正常終了 aeu')
++ : '正常終了 aeu'
+$ (set -x; : 'aeu 正常終了')
++ : $'aeu \u[6b63]\u[5e38]\u[7d42]\u[4e86]'
+
+This issue was originally reported by lijo george in May 2017:
+https://www.mail-archive.com/ast-developers@lists.research.att.com/msg01958.html
+
+src/cmd/ksh93/sh/string.c:
+- Add is_invisible() function that returns true if a character is a
+  Unicode invisible (non-graph) character, excluding ASCII space.
+  Ref.: https://unicode.org/charts/PDF/U2000.pdf
+- Use a fallback in is_invisible() if we cannot use the system's
+  iswprint(3); this is the case for the ksh C.UTF-8 locale if the
+  OS doesn't support that. Fall back to a hardcoded blacklist of
+  invisible and control characters and put up with not encoding
+  nonexistent characters into \u[xxxx] escapes.
+  Ref.: https://unicode.org/charts/PDF/U2000.pdf
+- When deciding whether to switch to $'...' quoting mode (state=2),
+  use is_invisible() instead of testing for ASCII 0-127 range.
+- In $'...' quoting mode, use is_invisible() to decide whether to
+  encode wide characters into \u[xxxx] escapes.
+
+src/cmd/ksh93/tests/builtins.sh:
+- Add regression tests for shellquoting Arabic, Japanese and Latin
+  UTF-8 characters, to be run only in a UTF-8 locale. The Arabic
+  sample text[*] contains a couple of direction markers that are
+  expected to be encoded into \u[xxxx] escapes.
+
+[*] source: https://r12a.github.io/scripts/tutorial/summaries/arabic
+
+Upstream-commit: f9d28935bb93fe7336ba8c5eab4231050de2e11e
+Cherry-picked-by: Lukáš Zaoral <lzaoral@redhat.com>
+---
+ src/cmd/ksh93/sh/string.c       | 32 ++++++++++++++++++++++++++++++--
+ src/cmd/ksh93/tests/builtins.sh | 18 ++++++++++++++++++
+ 2 files changed, 48 insertions(+), 2 deletions(-)
+
+diff --git a/src/cmd/ksh93/sh/string.c b/src/cmd/ksh93/sh/string.c
+index 5eb124b75b23..fd620a09e9b0 100644
+--- a/src/cmd/ksh93/sh/string.c
++++ b/src/cmd/ksh93/sh/string.c
+@@ -325,6 +325,34 @@ static char	*sh_fmtcsv(const char *string)
+ 	return(stakptr(offset));
+ }
+ 
++#if SHOPT_MULTIBYTE
++/*
++ * Returns true if c is an invisible Unicode character, excluding ASCII space.
++ * Use iswgraph(3) if possible. In the ksh-specific C.UTF-8 locale, this is
++ * generally not possible as the OS-provided iswgraph(3) doesn't support that
++ * locale. So do a quick test and do our best with a fallback if necessary.
++ */
++static int	is_invisible(int c)
++{
++	if(!mbwide())					/* not in multibyte locale? */
++		return(c != ' ' && !isgraph(c));	/* use plain isgraph(3) */
++	else if(iswgraph(0x5E38) && !iswgraph(0xFEFF))	/* can we use iswgraph(3)? */
++		return(c != ' ' && !iswgraph(c));	/* use iswgraph(3) */
++	else						/* fallback: */
++		return(	c <= 0x001F ||			/* control characters */
++			c >= 0x007F && c <= 0x009F ||	/* control characters */
++			c == 0x00A0 ||			/* non-breaking space */
++			c == 0x061C ||			/* arabic letter mark */
++			c == 0x1680 ||			/* ogham space mark */
++			c == 0x180E ||			/* mongolian vowel separator */
++			c >= 0x2000 && c <= 0x200F ||	/* spaces and format characters */
++			c >= 0x2028 && c <= 0x202F ||	/* separators and format characters */
++			c >= 0x205F && c <= 0x206F ||	/* various format characters */
++			c == 0x3000 ||			/* ideographic space */
++			c == 0xFEFF );			/* zero-width non-breaking space */
++}
++#endif /* SHOPT_MULTIBYTE */
++
+ /*
+  * print <str> quoting chars so that it can be read by the shell
+  * puts null terminated result on stack, but doesn't freeze it
+@@ -363,7 +391,7 @@ char	*sh_fmtq(const char *string)
+ 	for(;c;c= mbchar(cp))
+ 	{
+ #if SHOPT_MULTIBYTE
+-		if(c=='\'' || c>=128 || c<0 || !iswprint(c)) 
++		if(c=='\'' || is_invisible(c))
+ #else
+ 		if(c=='\'' || !isprint(c))
+ #endif /* SHOPT_MULTIBYTE */
+@@ -426,7 +454,7 @@ char	*sh_fmtq(const char *string)
+ 					cp = op+1;
+ 					isbyte = 1;
+ 				}
+-				if(mbwide() && ((cp-op)>1))
++				if(mbwide() && is_invisible(c))
+ 				{
+ 					sfprintf(staksp,"\\u[%x]",c);
+ 					continue;
+diff --git a/src/cmd/ksh93/tests/builtins.sh b/src/cmd/ksh93/tests/builtins.sh
+index 66d465e0a205..34ef9c914f29 100755
+--- a/src/cmd/ksh93/tests/builtins.sh
++++ b/src/cmd/ksh93/tests/builtins.sh
+@@ -318,6 +318,24 @@
+ then	err_exit "printf '%..*s' not working"
+ fi
+ [[ $(printf '%q\n') == '' ]] || err_exit 'printf "%q" with missing arguments'
++# shell-quoting UTF-8 characters: check for unnecessary encoding
++case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in
++( *[Uu][Tt][Ff]8* | *[Uu][Tt][Ff]-8* )
++	expect=$'$\'عندما يريد العالم أن \\u[202a]يتكلّم \\u[202c] ، فهو يتحدّث بلغة يونيكود.\''
++	actual=$(printf %q 'عندما يريد العالم أن ‪يتكلّم ‬ ، فهو يتحدّث بلغة يونيكود.')
++	[[ $actual == "$expect" ]] || err_exit 'shell-quoting: Arabic UTF-8 characters' \
++				"(expected $expect; got $actual)"
++	expect="'正常終了 正常終了'"
++	actual=$(printf %q '正常終了 正常終了')
++	[[ $actual == "$expect" ]] || err_exit 'shell-quoting: Japanese UTF-8 characters' \
++				"(expected $expect; got $actual)"
++	expect="'aeu aéu'"
++	actual=$(printf %q 'aeu aéu')
++	[[ $actual == "$expect" ]] || err_exit 'shell-quoting: Latin UTF-8 characters' \
++				"(expected $expect; got $actual)"
++	;;
++esac
++
+ # we won't get hit by the one second boundary twice, right?
+ [[ $(printf '%T\n' now | sed 's/GMT/UTC/') == "$(date)" ]] ||
+ [[ $(printf '%T\n' now | sed 's/GMT/UTC/') == "$(date)" ]] ||
