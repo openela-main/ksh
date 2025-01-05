@@ -1,0 +1,79 @@
+diff --git a/src/cmd/ksh93/bltins/cflow.c b/src/cmd/ksh93/bltins/cflow.c
+index b7cfd19..66e0f70 100644
+--- a/src/cmd/ksh93/bltins/cflow.c
++++ b/src/cmd/ksh93/bltins/cflow.c
+@@ -67,8 +67,12 @@ done:
+ 	{
+ 		long l = strtol(*argv, NULL, 10);
+ 		if(do_exit)
++                {
+ 			n = (int)(l & SH_EXITMASK);	/* exit: apply bitmask before conversion to avoid undefined int overflow */
+-		else if((long)(n = (int)l) != l)	/* return: convert to int and check for overflow (should be safe enough) */
++                        if (sh.intrap)
++                                sh.intrap_exit_n = 1;
++		}
++                else if((long)(n = (int)l) != l)	/* return: convert to int and check for overflow (should be safe enough) */
+ 		{
+ 			errormsg(SH_DICT,ERROR_warn(0),"%s: out of range",*argv);
+ 			n = 128;			/* overflow is undefined, so use a consistent status for this */
+diff --git a/src/cmd/ksh93/include/shell.h b/src/cmd/ksh93/include/shell.h
+index 9794995..58e2f2a 100644
+--- a/src/cmd/ksh93/include/shell.h
++++ b/src/cmd/ksh93/include/shell.h
+@@ -308,6 +308,7 @@ struct Shell_s
+ 	int		savesig;
+ 	unsigned char	*sigflag;	/* pointer to signal states */
+ 	char		intrap;
++        char		intrap_exit_n;	/* set if 'exit n' within trap */
+ 	char		forked;
+ 	char		binscript;
+ 	char		funload;
+diff --git a/src/cmd/ksh93/sh/fault.c b/src/cmd/ksh93/sh/fault.c
+index 510bf56..8222a9d 100644
+--- a/src/cmd/ksh93/sh/fault.c
++++ b/src/cmd/ksh93/sh/fault.c
+@@ -528,11 +528,7 @@ int sh_trap(const char *trap, int mode)
+ 		if(jmpval==SH_JMPSCRIPT)
+ 			indone=0;
+ 		else
+-		{
+-			if(jmpval==SH_JMPEXIT)
+-				savxit = sh.exitval;
+ 			jmpval=SH_JMPTRAP;
+-		}
+ 	}
+ 	sh_popcontext(&buff);
+ 	/* re-allow last-command exec optimisation unless the command we executed set a trap */
+@@ -541,8 +537,10 @@ int sh_trap(const char *trap, int mode)
+ 	sh.intrap--;
+ 	sfsync(sh.outpool);
+ 	savxit_return = sh.exitval;
+-	if(jmpval!=SH_JMPEXIT && jmpval!=SH_JMPFUN)
+-		sh.exitval=savxit;
++	if(sh.intrap_exit_n)
++		sh.intrap_exit_n = 0;
++	else
++		sh.exitval = savxit;
+ 	stkset(sh.stk,savptr,staktop);
+ 	fcrestore(&savefc);
+ 	if(was_history)
+diff --git a/src/cmd/ksh93/tests/return.sh b/src/cmd/ksh93/tests/return.sh
+index 25e4c7a..8db197b 100755
+--- a/src/cmd/ksh93/tests/return.sh
++++ b/src/cmd/ksh93/tests/return.sh
+@@ -247,5 +247,15 @@ foo && err_exit "'exit' within { block; } with redirection does not preserve exi
+ foo() { false; (exit); }
+ foo && err_exit "'exit' within subshell does not preserve exit status"
+ 
++# ======
++# old AT&T bug reintroduced in v1.0.8 (commit aea99158)
++f() { true; return; }
++trap 'f; echo $? >out' USR1
++(exit 13)
++kill -s USR1 ${.sh.pid}
++trap - USR1
++unset -f f
++[[ $(<out) == 0 ]] || err_exit "default return status in traps is broken (expected 0, got $(<out))"
++
+ # ======
+ exit $((Errors<125?Errors:125))

@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      1.0.6
-Release:      3%{?dist}
+Release:      4%{?dist}
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -25,6 +25,9 @@ Patch3:       %{name}-1.0.7-history-trim.patch
 
 #upstream commit: https://github.com/ksh93/ksh/commit/9eb8532ccacf1cfdb7ba18f51eba68776852ef7c.patch
 Patch4: ksh-1.0.7-segfault-strdup.patch
+
+#upstream commit: https://github.com/ksh93/ksh/commit/428c0917f3043358c9b54cc137a5037d69b01ed4
+Patch5: ksh-1.0.9-trap-return-status.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -147,6 +150,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Tue Oct 01 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-4
+- Fix bad default 'return' status in traps
+  Resolves: RHEL-62228
+
 * Sat Feb 10 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-3
 - Fix segfault in strdup
   Resolves: RHEL-25019
