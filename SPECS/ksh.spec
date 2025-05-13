@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      1.0.6
-Release:      4%{?dist}
+Release:      6%{?dist}
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -28,6 +28,12 @@ Patch4: ksh-1.0.7-segfault-strdup.patch
 
 #upstream commit: https://github.com/ksh93/ksh/commit/428c0917f3043358c9b54cc137a5037d69b01ed4
 Patch5: ksh-1.0.9-trap-return-status.patch
+
+#upstream commit: https://github.com/ksh93/ksh/commit/caae9aa23e2851cadf55f858a8f38b9f0de74314
+Patch6: ksh-1.0.11-SHLVL.patch
+
+#upstream commit: https://github.com/ksh93/ksh/commit/5def43983de3ecfa38c805c02a1f0d6f1581160c
+Patch7: ksh-1.0.11-redir.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -150,6 +156,14 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Wed Jan 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-6
+- Add forking workaround for block stdout redir
+  Resolves: RHEL-55913
+
+* Mon Jan 13 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-5
+- Fix crash on 'exec' after 'unset SHLVL'
+  Resolves: RHEL-59656
+
 * Tue Oct 01 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-4
 - Fix bad default 'return' status in traps
   Resolves: RHEL-62228
