@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      1.0.6
-Release:      6%{?dist}
+Release:      7%{?dist}.1
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -34,6 +34,9 @@ Patch6: ksh-1.0.11-SHLVL.patch
 
 #upstream commit: https://github.com/ksh93/ksh/commit/5def43983de3ecfa38c805c02a1f0d6f1581160c
 Patch7: ksh-1.0.11-redir.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/96d73c08a2786806f3def1fda66641b81e0af988
+Patch8: ksh-1.0.11-ssh-multibyte-long-paste.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -156,6 +159,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Tue Apr 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-7
+- Fix long multibyte characters paste issue via ssh
+  Resolves: RHEL-87336
+
 * Wed Jan 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-6
 - Add forking workaround for block stdout redir
   Resolves: RHEL-55913
