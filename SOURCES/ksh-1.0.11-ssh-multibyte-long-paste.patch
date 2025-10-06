@@ -1,0 +1,94 @@
+From 96d73c08a2786806f3def1fda66641b81e0af988 Mon Sep 17 00:00:00 2001
+From: SHIMIZU Akifumi <shimizu.akifumi@fujitsu.com>
+Date: Mon, 7 Apr 2025 19:47:16 +0900
+Subject: [PATCH] Fix long multibyte characters paste issue via ssh (#840)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When I paste long multibyte characters(over 80 byte) to ksh via
+SSH, the characters are not displayed correctly. For example, the
+following input demonstrates the issue. ja_JP.UTF-8 encoding is
+used.
+
+Expected command line display:
+$ echo "長い文字列を入れるとkshで文字列が乱れる場合があるようです"
+
+Actual command line display:
+$ です"echo "長い文字列を入れるとkshで文字列が乱れる場合がある
+...with the cursor over the 'e' in 'echo'.
+
+This issue appears to be caused by the ed_read() function splitting
+a multibyte character sequence when reading into an 80-byte buffer.
+This leads to incorrect character interpretation and display.
+
+Therefore, we edited the code to handle the case where the buffer
+size is full in the middle of a multi-byte character.
+
+src/cmd/ksh93/sh/edit.c:
+- putstack():
+  - Before retrying to interpret a multibyte character in case of a
+    split due to end of buffer, restore the start position 'p'.
+  - Fix zeroing out errno = EILSEQ.
+- ed_getchar(): Avoid a potential buffer overflow in 'readin';
+  allow for an extra multibyte character, not merely an extra byte.
+
+Co-authored-by: Martijn Dekker <martijn@inlv.org>
+---
+ src/cmd/ksh93/edit/edit.c       | 13 ++++++++-----
+ 1 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/src/cmd/ksh93/edit/edit.c b/src/cmd/ksh93/edit/edit.c
+index edfe4101e715..cc9f474695d8 100644
+--- a/src/cmd/ksh93/edit/edit.c
++++ b/src/cmd/ksh93/edit/edit.c
+@@ -15,6 +15,7 @@
+ *            Johnothan King <johnothanking@protonmail.com>             *
+ *               Anuradha Weeraman <anuradha@debian.org>                *
+ *               K. Eugene Carlson <kvngncrlsn@gmail.com>               *
++*            SHIMIZU Akifumi <shimizu.akifumi@fujitsu.com>             *
+ *                                                                      *
+ ***********************************************************************/
+ /*
+@@ -764,6 +765,7 @@ static int putstack(Edit_t *ep,char string[], int nbyte, int type)
+ 		}
+ 		else
+ 		{
++			char *prevp = p;
+ 		again:
+ 			if((c=mbchar(p)) >=0)
+ 			{
+@@ -771,19 +773,20 @@ static int putstack(Edit_t *ep,char string[], int nbyte, int type)
+ 				if(type)
+ 					c = -c;
+ 			}
+-#ifdef EILSEQ
+-			else if(errno == EILSEQ)
+-				errno = 0;
+-#endif
+ 			else if((endp-p) < mbmax())
+ 			{
++				if(errno == EILSEQ)
++					errno = 0;
+ 				if ((c=ed_read(ep,ep->e_fd,endp, 1,0)) == 1)
+ 				{
++					p = prevp;
+ 					*++endp = 0;
+ 					goto again;
+ 				}
+ 				return c;
+ 			}
++			else if(errno == EILSEQ)
++				errno = 0;
+ 			else
+ 			{
+ 				ed_ringbell();
+@@ -833,7 +836,7 @@ static int putstack(Edit_t *ep,char string[], int nbyte, int type)
+ int ed_getchar(Edit_t *ep,int mode)
+ {
+ 	int n = 0, c;
+-	char readin[LOOKAHEAD+1];
++	char *readin = fmtbuf(LOOKAHEAD + mbmax());
+ 	if(!ep->e_lookahead)
+ 	{
+ 		ed_flush(ep);
