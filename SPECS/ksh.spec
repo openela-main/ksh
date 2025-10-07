@@ -6,7 +6,7 @@ Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Version:      %{releasedate}
-Release:      267%{?dist}
+Release:      269%{?dist}
 Source0:      http://www.research.att.com/~gsf/download/tgz/ast-ksh.%{release_date}.tgz
 Source1:      http://www.research.att.com/~gsf/download/tgz/INIT.%{release_date}.tgz
 Source2:      kshcomp.conf
@@ -258,6 +258,11 @@ Patch99: %{name}-1.0.7-history-trim.patch
 # upstream commit: https://github.com/ksh93/ksh/commit/91a7c2e3e9feb8ac1391146ebcda9e6adfcd3cfb
 Patch100: ksh-20120801-subshell-interrupt-segv.patch
 
+# RHEL-87334
+# upstream commit: https://github.com/ksh93/ksh/commit/4886463bb6d3df2b827d784a97e13c7765d57178
+# upstream commit: https://github.com/ksh93/ksh/commit/96d73c08a2786806f3def1fda66641b81e0af988
+Patch101: ksh-1.0.11-ssh-multibyte-long-paste.patch
+
 Conflicts:    pdksh
 Requires: coreutils, diffutils, chkconfig
 BuildRequires: bison
@@ -411,6 +416,14 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Wed Jun 25 2025 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-269
+- Further fix long multibyte characters paste issue via ssh
+  Resolves: RHEL-87334
+
+* Tue Apr 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-268
+- Fix long multibyte characters paste issue via ssh
+  Resolves: RHEL-87334
+
 * Fri Feb 09 2024 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-267
 - Re-fix segfault in strdup
   Resolves: RHEL-11982
