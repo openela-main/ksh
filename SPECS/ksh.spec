@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      1.0.6
-Release:      7%{?dist}.1
+Release:      7%{?dist}.2
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -37,6 +37,7 @@ Patch7: ksh-1.0.11-redir.patch
 
 # upstream commit: https://github.com/ksh93/ksh/commit/96d73c08a2786806f3def1fda66641b81e0af988
 Patch8: ksh-1.0.11-ssh-multibyte-long-paste.patch
+Patch9: RHEL-112564.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -159,6 +160,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Wed Oct 01 2025 RHEL Packaging Agent <jotnar@redhat.com> - 3:1.0.6-7.2
+- Fix 'stty -echo' in scripts
+- Resolves: RHEL-112564
+
 * Tue Apr 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-7
 - Fix long multibyte characters paste issue via ssh
   Resolves: RHEL-87336

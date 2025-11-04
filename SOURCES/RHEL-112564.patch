@@ -1,0 +1,80 @@
+From e8554b5131fc32b26a6a0b0ab5cf24839e30161a Mon Sep 17 00:00:00 2001
+From: Martijn Dekker <martijn@inlv.org>
+Date: Sun, 30 Mar 2025 00:14:35 +0000
+Subject: [PATCH] Fix 'stty -echo' in scripts (re: 41ebb55a)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Vincent Mihalkovič (@vmihalko) reports:
+> In ksh versions later than v1.0.0-beta.1, setting stty -echo in a
+> script no longer works as expected. This issue did not occur in
+> earlier versions.
+>
+> I performed a git bisect between the last known good tag (reboot)
+> and the first known bad tag (v1.0.0-beta.1). The regression was
+> introduced in commit 41ebb55a.
+>
+> Reproducer:
+>   read a
+>   stty -echo
+>   read b
+>
+> Expected Behavior:
+>   • Input for a should be visible.
+>   • Input for b should not be echoed to the terminal.
+>
+> Actual Behavior:
+>   • Input for a is visible as expected.
+>   • Input for b is also visible, despite stty -echo being set.
+
+Analysis:
+
+The problem was that the tty_set(-1, 0, NULL) call below, which
+invalidates saved terminal attributes, was no longer being executed
+when running a script (note that job.jobcontrol is 0/false for
+scripts). See edit.c for the tty_set function and what it does.
+
+src/cmd/ksh93/sh/jobs.c
+1423:	else if(job.jobcontrol)
+1424:	{
+1425:		if(pw->p_pid == tcgetpgrp(JOBTTY))
+1426:		{
+...skipped for brevity...
+1430:		}
+1431:		tty_set(-1, 0, NULL);
+1432:	}
+
+So, after running an external command such as stty, terminal
+attributes that should have been invalidated were restored upon the
+next 'read'. This was undoing the effect of the stty command.
+
+src/cmd/ksh93/sh/jobs.c: job_wait():
+- Move the test for job.jobcontrol so that saved terminal
+  attributes are again invalidated after running an external
+  command when job control for interactive shells is not active.
+
+Resolves: https://github.com/ksh93/ksh/issues/836
+---
+ src/cmd/ksh93/sh/jobs.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/cmd/ksh93/sh/jobs.c b/src/cmd/ksh93/sh/jobs.c
+index be333b2..081e73a 100644
+--- a/src/cmd/ksh93/sh/jobs.c
++++ b/src/cmd/ksh93/sh/jobs.c
+@@ -1492,9 +1492,9 @@ int	job_wait(pid_t pid)
+ 			kill(sh.current_pid,SIGTSTP);
+ 		}
+ 	}
+-	else if(job.jobcontrol)
++	else
+ 	{
+-		if(pw->p_pid == tcgetpgrp(JOBTTY))
++		if(job.jobcontrol && pw->p_pid == tcgetpgrp(JOBTTY))
+ 		{
+ 			if(pw->p_pgrp==0)
+ 				pw->p_pgrp = pw->p_pid;
+-- 
+2.47.3
+
