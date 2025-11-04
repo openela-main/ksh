@@ -6,7 +6,7 @@ Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Version:      %{releasedate}
-Release:      269%{?dist}
+Release:      270%{?dist}
 Source0:      http://www.research.att.com/~gsf/download/tgz/ast-ksh.%{release_date}.tgz
 Source1:      http://www.research.att.com/~gsf/download/tgz/INIT.%{release_date}.tgz
 Source2:      kshcomp.conf
@@ -263,6 +263,10 @@ Patch100: ksh-20120801-subshell-interrupt-segv.patch
 # upstream commit: https://github.com/ksh93/ksh/commit/96d73c08a2786806f3def1fda66641b81e0af988
 Patch101: ksh-1.0.11-ssh-multibyte-long-paste.patch
 
+# RHEL-92629
+# https://github.com/ksh93/ksh/commit/970812e39c236ff385e440ac6d458d196c237667
+Patch102: ksh-1.0.12-security.patch
+
 Conflicts:    pdksh
 Requires: coreutils, diffutils, chkconfig
 BuildRequires: bison
@@ -416,6 +420,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Mon Jul 21 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-270
+- Fix arbitrary command execution/code injection bugs
+  RHEL-92629
+
 * Wed Jun 25 2025 Lukáš Zaoral <lzaoral@redhat.com> - 20120801-269
 - Further fix long multibyte characters paste issue via ssh
   Resolves: RHEL-87334
