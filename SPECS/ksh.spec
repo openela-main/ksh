@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-2.0
 Epoch:        3
 Version:      1.0.10
-Release:      5%{?dist}.1
+Release:      8%{?dist}
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -16,8 +16,17 @@ Patch1:         ksh-1.0.11-SHLVL.patch
 #upstream commit: https://github.com/ksh93/ksh/commit/5def43983de3ecfa38c805c02a1f0d6f1581160c
 Patch2: ksh-1.0.11-redir.patch
 
+# upstream commit: https://github.com/ksh93/ksh/commit/4350174a5d4acabf78f97b28c6d0ae68ec703e78
+Patch3: ksh-1.0.11-stty-noecho.patch
+
 # upstream commit: https://github.com/ksh93/ksh/commit/96d73c08a2786806f3def1fda66641b81e0af988
-Patch3: ksh-1.0.11-ssh-multibyte-long-paste.patch
+Patch4: ksh-1.0.11-ssh-multibyte-long-paste.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/9f03b3bdb577ce74be3122d533c02830e3038e54
+Patch5: ksh-1.0.11-segfault-sigwinch.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/970812e39c236ff385e440ac6d458d196c237667
+Patch6: ksh-1.0.12-security.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -147,9 +156,21 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
-* Tue Apr 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.10-5
+* Wed Aug 06 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.10-8
+- Fix arbitrary command execution/code injection bugs
+  Resolves: RHEL-99064
+
+* Mon May 19 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.10-7
+- Fix segfault upon SIGWINCH after 'stty -echo'
+  Resolves: RHEL-89866
+
+* Wed Apr 16 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.10-6
 - Fix long multibyte characters paste issue via ssh
-  Resolves: RHEL-87335
+  Resolves: RHEL-87564
+
+* Mon Mar 31 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.10-5
+- Fix 'stty -echo' in scripts
+  Resolves: RHEL-85455
 
 * Mon Jan 20 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.10-4
 - Add forking workaround for block stdout redir

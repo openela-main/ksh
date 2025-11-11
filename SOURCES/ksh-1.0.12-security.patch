@@ -1,0 +1,848 @@
+From 970812e39c236ff385e440ac6d458d196c237667 Mon Sep 17 00:00:00 2001
+From: Johnothan King <johnothanking@protonmail.com>
+Date: Fri, 13 Jun 2025 16:29:15 -0700
+Subject: [PATCH] Fix arbitrary command execution/code injection bugs (#866)
+
+* Security patch part 1
+
+Never use $SHELL or sh.shpath when executing shebang-less scripts
+
+- sh_ntfork(): Removed a misguided optimization that causes ksh to
+  run scripts without a shebang using the binary pointed to by
+  either $SHELL or sh.shpath. This has a few problems:
+  - The shell in sh.shpath or more disastrously in $SHELL has
+    no guarantee of being identical to the currently running
+    copy of ksh93 or even existing at all, so using either is
+    not only bogus, but potentially dangerous.
+  - The optimization has no ability to pass down the current
+    POSIX mode status to the script.
+  - It's only activated for virtual subshells, resulting in
+    arbitrarily different behavior depending on whether or
+    not we're in a virtual subshell.
+  - It does some weird stuff with /dev/fd that seems superfluous,
+    and also lacks any SHOPT_DEVFD if directive. (Additionally,
+    if it did have one, that stat(2) would likely become mere
+    dead code and a waste of context switches.)
+
+The optimization was probably intended to be used for running a
+shebang-less script via posix_spawn, which is ostensibly faster
+than fork. But this simply isn't possible without risking running
+the shebang-less script in a shell environment different from
+the current one. (If ksh were updated by the package manager
+while ksh is still running, this optimization would cause the
+script to run via the new version, rather than the currently
+running older version.) The optimization is unfixable by design,
+and as such must be removed to ensure correct behavior.
+
+* Security patch part 2 (re: bae02c39)
+
+rm setuid script code leading to arbitrary command execution
+
+Changes:
+- Delete code for setuid scripts on "Solaris 2.5+" because it
+  allows for arbitrary command execution. One millisecond you think
+  you're launching ksh, the next you're at the mercy of a hijacker.
+  Example:
+    SHELL=/bin/ppmflash /bin/ksh -l /dev/fd/0 < <(true)
+    MANPATH: usage:  MANPATH flashfactor [ppmfile]
+        flashfactor: 0.0 = original picture, 1.0 = total whiteout
+  The pathshell() code doesn't *seem* to be vulnerable to privilege
+  escalation, but who knows (cf. CVE-2019-14868; this might need its
+  own CVE 2025. Maybe pathshell() should be scrapped entirely???)
+- Add fickle but functional regression test (you may need to pass
+  KSH=/bin/ksh or some such to get it to fail against vulnerable
+  versions of ksh). The test uses a login shell via the -l option,
+  but the bug *does not* need a login shell. See:
+  https://github.com/ksh93/ksh/issues/874#issue-3128739066
+  Modify the execveat reproducer to pass along environ (which
+  could include a hijacked SHELL), and you're in for a BAD time.
+
+Maybe the deleted code (introduced sometime within the period of 1995
+and 1999) was relevant to some Solaris-specific use case or something.
+Maybe the erasure even causes an incompatibility. But that code must
+go; it's far too dangerous to execv whatever the hell pathshell gives
+us during **init**. (Need I bring CVE-2019-14868 back to remembrance
+again? This bug has similarities to that one.)
+
+FWIW, all of the regression tests in the ksh and modernish suites pass
+with this patch applied.
+
+* Security patch part 3
+
+Delete pathshell() and replace uses of it with safer equivalents
+
+This function is a dangerous attack vector that ought not remain
+in the code base. The value returned by astconf() is doubtless
+safer than what is returned by pathshell().
+
+* Other changes
+
+The libast pathprog function and prog feature test are now unused,
+and are removed.
+---
+ NEWS                            |  17 +++++
+ src/cmd/ksh93/include/shell.h   |   3 -
+ src/cmd/ksh93/sh/init.c         |  33 +--------
+ src/cmd/ksh93/sh/main.c         |  21 ------
+ src/cmd/ksh93/sh/path.c         |   2 -
+ src/cmd/ksh93/sh/xec.c          |  20 ------
+ src/cmd/ksh93/tests/basic.sh    |  28 ++++++++
+ src/cmd/ksh93/tests/posix.sh    |   2 -
+ src/lib/libast/Mamfile          |  28 --------
+ src/lib/libast/comp/omitted.c   |   2 +-
+ src/lib/libast/comp/system.c    |  48 -------------
+ src/lib/libast/features/prog    |  12 ----
+ src/lib/libast/include/ast.h    |   2 -
+ src/lib/libast/man/compat.3     |   1 -
+ src/lib/libast/man/path.3       |  13 ----
+ src/lib/libast/man/proc.3       |   5 +-
+ src/lib/libast/misc/cmdarg.c    |   2 +-
+ src/lib/libast/misc/procopen.c  |   2 +-
+ src/lib/libast/path/pathprog.c  | 124 --------------------------------
+ src/lib/libast/path/pathshell.c | 115 -----------------------------
+ 20 files changed, 52 insertions(+), 428 deletions(-)
+ delete mode 100644 src/lib/libast/comp/system.c
+ delete mode 100644 src/lib/libast/features/prog
+ delete mode 100644 src/lib/libast/path/pathprog.c
+ delete mode 100644 src/lib/libast/path/pathshell.c
+
+diff --git a/NEWS b/NEWS
+index f9b6e46..9e6bc6a 100644
+--- a/NEWS
++++ b/NEWS
+@@ -2,6 +2,23 @@ This documents significant changes in the 1.0 branch of ksh 93u+m.
+ For full details, see the git log at: https://github.com/ksh93/ksh/tree/1.0
+ Uppercase BUG_* IDs are shell bug IDs as used by the Modernish shell library.
+ 
++2025-06-14:
++
++- Fixed a bug occurring on systems with posix_spawn(3), spawnve(2), and
++  spawn(2), which when exploited could cause ksh93 to execute scripts
++  without a shebang with a shell other than itself, provided /bin/ksh
++  was hijacked, or in the case of ksh being unable to obtain it's own
++  executable path, whatever the SHELL variable was set to.
++
++- Fixed a bug that could cause scripts without a shebang to run
++  without POSIX mode enabled when executed in a virtual subshell.
++
++- Fixed a bug that could allow an attacker to hijack ksh93 during
++  shell initialization to execv a shell other than ksh itself, leading to
++  the ksh process being surreptitiously replaced with bash, zsh, or
++  really anything, provided the binary name ends with the letters
++  'sh'.
++
+ 2024-08-01:
+ 
+ - Release 1.0.10 -- exactly two years after 1.0.0 and twelve years after 93u+.
+diff --git a/src/cmd/ksh93/include/shell.h b/src/cmd/ksh93/include/shell.h
+index 96d982a..a7b090c 100644
+--- a/src/cmd/ksh93/include/shell.h
++++ b/src/cmd/ksh93/include/shell.h
+@@ -213,8 +213,6 @@ struct sh_scoped
+ 	char		**trapcom;	/* EXIT and signals */
+ 	char		**otrapcom;	/* save parent EXIT and signals for v=$(trap) */
+ 	struct Ufunction *real_fun;	/* current 'function name' function */
+-	int             repl_index;
+-	char            *repl_arg;
+ };
+ 
+ struct limits
+@@ -255,7 +253,6 @@ struct Shell_s
+ 	Namval_t	*bltin_nodes;
+ 	Namval_t	*bltin_cmds;
+ 	History_t	*hist_ptr;
+-	char		*shpath;
+ 	char		*user;
+ 	char		**sigmsg;
+ 	char		**login_files;
+diff --git a/src/cmd/ksh93/sh/init.c b/src/cmd/ksh93/sh/init.c
+index 1f1b71e..ab2ac66 100644
+--- a/src/cmd/ksh93/sh/init.c
++++ b/src/cmd/ksh93/sh/init.c
+@@ -1352,33 +1352,6 @@ Shell_t *sh_init(int argc,char *argv[], Shinit_f userinit)
+ 	}
+ 	/* increase SHLVL */
+ 	sh.shlvl++;
+-#if SHOPT_SPAWN
+-	{
+-		/*
+-		 * try to find the pathname for this interpreter
+-		 * try using environment variable _ or argv[0]
+-		 */
+-		char *cp=nv_getval(L_ARGNOD);
+-		char buff[PATH_MAX+1];
+-		sh.shpath = 0;
+-		if((n = pathprog(NULL, buff, sizeof(buff))) > 0 && n <= sizeof(buff))
+-			sh.shpath = sh_strdup(buff);
+-		else if((cp && (sh_type(cp)&SH_TYPE_SH)) || (argc>0 && strchr(cp= *argv,'/')))
+-		{
+-			if(*cp=='/')
+-				sh.shpath = sh_strdup(cp);
+-			else if(cp = nv_getval(PWDNOD))
+-			{
+-				int offset = stktell(sh.stk);
+-				sfputr(sh.stk,cp,'/');
+-				sfputr(sh.stk,argv[0],-1);
+-				pathcanon(stkptr(sh.stk,offset),PATH_DOTDOT);
+-				sh.shpath = sh_strdup(stkptr(sh.stk,offset));
+-				stkseek(sh.stk,offset);
+-			}
+-		}
+-	}
+-#endif
+ 	nv_putval(IFSNOD,(char*)e_sptbnl,NV_RDONLY);
+ 	astconfdisc(newconf);
+ #if SHOPT_TIMEOUT
+@@ -1391,7 +1364,6 @@ Shell_t *sh_init(int argc,char *argv[], Shinit_f userinit)
+ #endif
+ 	if(argc>0)
+ 	{
+-		int dolv_index;
+ 		/* check for restricted shell */
+ 		if(type&SH_TYPE_RESTRICTED)
+ 			sh_onoption(SH_RESTRICTED);
+@@ -1403,10 +1375,7 @@ Shell_t *sh_init(int argc,char *argv[], Shinit_f userinit)
+ 			sh_done(0);
+ 		}
+ 		opt_info.disc = 0;
+-		dolv_index = (argc - 1) - sh.st.dolc;
+-		sh.st.dolv = argv + dolv_index;
+-		sh.st.repl_index = dolv_index;
+-		sh.st.repl_arg = argv[dolv_index];
++		sh.st.dolv = argv + (argc - 1) - sh.st.dolc;
+ 		sh.st.dolv[0] = argv[0];
+ 		if(sh.st.dolc < 1)
+ 		{
+diff --git a/src/cmd/ksh93/sh/main.c b/src/cmd/ksh93/sh/main.c
+index 7acce0a..3ec360e 100644
+--- a/src/cmd/ksh93/sh/main.c
++++ b/src/cmd/ksh93/sh/main.c
+@@ -243,33 +243,12 @@ int sh_main(int ac, char *av[], Shinit_f userinit)
+ 				/* open stream should have been passed into shell */
+ 				if(strmatch(name,e_devfdNN))
+ 				{
+-#if !_WINIX
+-					char *cp;
+-					int type;
+-#endif
+ 					fdin = (int)strtol(name+8, NULL, 10);
+ 					if(fstat(fdin,&statb)<0)
+ 					{
+ 						errormsg(SH_DICT,ERROR_system(1),e_open,name);
+ 						UNREACHABLE();
+ 					}
+-#if !_WINIX
+-					/*
+-					 * try to undo effect of Solaris 2.5+
+-					 * change for argv for setuid scripts
+-					 */
+-					if(sh.st.repl_index > 0)
+-						av[sh.st.repl_index] = sh.st.repl_arg;
+-					if(((type = sh_type(cp = av[0])) & SH_TYPE_SH) && (name = nv_getval(L_ARGNOD)) && (!((type = sh_type(cp = name)) & SH_TYPE_SH)))
+-					{
+-						av[0] = (type & SH_TYPE_LOGIN) ? cp : path_basename(cp);
+-						/* exec to change $0 for ps */
+-						execv(pathshell(),av);
+-						/* exec fails */
+-						sh.st.dolv[0] = av[0];
+-						fixargs(sh.st.dolv,1);
+-					}
+-#endif
+ 					name = av[0];
+ 					sh_offoption(SH_VERBOSE);
+ 					sh_offoption(SH_XTRACE);
+diff --git a/src/cmd/ksh93/sh/path.c b/src/cmd/ksh93/sh/path.c
+index 2e0f76e..06bf66f 100644
+--- a/src/cmd/ksh93/sh/path.c
++++ b/src/cmd/ksh93/sh/path.c
+@@ -1196,8 +1196,6 @@ pid_t path_spawn(const char *opath,char **argv, char **envp, Pathcomp_t *libpath
+ 		 */
+ 		if(spawn)
+ 		{
+-			if(sh.subshell)
+-				return -1;
+ 			do
+ 			{
+ 				if((pid=fork())>0)
+diff --git a/src/cmd/ksh93/sh/xec.c b/src/cmd/ksh93/sh/xec.c
+index dd56905..8f82792 100644
+--- a/src/cmd/ksh93/sh/xec.c
++++ b/src/cmd/ksh93/sh/xec.c
+@@ -3395,26 +3395,6 @@ static pid_t sh_ntfork(const Shnode_t *t,char *argv[],int *jobid,int topfd)
+ 		job_fork(-1);
+ 		jobfork = 1;
+ 		spawnpid = path_spawn(path,argv,arge,pp,(grp<<1)|1);
+-		if(spawnpid < 0 && errno==ENOEXEC)
+-		{
+-			char *devfd;
+-			int fd = open(path,O_RDONLY);
+-			argv[-1] = argv[0];
+-			argv[0] = path;
+-			if(fd>=0)
+-			{
+-				struct stat statb;
+-				sfprintf(sh.strbuf,"/dev/fd/%d",fd);
+-				if(stat(devfd=sfstruse(sh.strbuf),&statb)>=0)
+-					argv[0] =  devfd;
+-			}
+-			if(!sh.shpath)
+-				sh.shpath = pathshell();
+-			spawnpid = path_spawn(sh.shpath,&argv[-1],arge,pp,(grp<<1)|1);
+-			if(fd>=0)
+-				close(fd);
+-			argv[0] = argv[-1];
+-		}
+ 	fail:
+ 		if(jobfork && spawnpid<0) 
+ 			job_fork(-2);
+diff --git a/src/cmd/ksh93/tests/basic.sh b/src/cmd/ksh93/tests/basic.sh
+index 49f4f41..5c034e3 100755
+--- a/src/cmd/ksh93/tests/basic.sh
++++ b/src/cmd/ksh93/tests/basic.sh
+@@ -1016,5 +1016,33 @@ do
+ done
+ unset testcode
+ 
++# ======
++# Hijacking ksh93 via $SHELL for arbitrary command execution during initialization.
++# https://github.com/ksh93/ksh/issues/874
++bindir=$tmp/dir.$RANDOM/bin
++mkdir -p "$bindir"
++echo $'#!/bin/sh\necho "CODE INJECTION"' > "$bindir"/hijack_sh
++chmod +x "$bindir"/hijack_sh
++got=$(set +x; SHELL="$bindir"/hijack_sh "$SHELL" -l <(echo) 2>&1)
++[[ $got =~ "CODE INJECTION" ]] && err_exit 'ksh93 is vulnerable to being hijacked during init via $SHELL' \
++	"(got $(printf %q "$got"))"
++
++# Hijacking ksh93 shebang-less scripts for arbitrary command execution.
++# https://github.com/ksh93/ksh/pull/866
++export bindir
++print 'echo GOOD' > "$bindir/dummy.sh"
++chmod +x "$bindir/dummy.sh"
++cp "$SHELL" "$bindir/hijack_sh"
++exp=$'GOOD\nGOOD'
++got=$("$bindir/hijack_sh" -c $'print $\'\#!/bin/sh\necho HIJACKED\' > "$bindir/hijack_shell"
++chmod +x "$bindir/hijack_shell"
++rm "$bindir/hijack_sh"
++cp "$bindir/hijack_shell" "$bindir/hijack_sh"
++("$bindir/dummy.sh"); "$bindir/dummy.sh"; :')
++rm -r "$bindir"
++unset bindir
++[[ $exp == $got ]] || err_exit 'ksh93 shebang-less scripts are vulnerable to being hijacked for arbitrary code execution' \
++	"(exp $(printf %q "$exp"), got $(printf %q "$got"))"
++
+ # ======
+ exit $((Errors<125?Errors:125))
+diff --git a/src/cmd/ksh93/tests/posix.sh b/src/cmd/ksh93/tests/posix.sh
+index f72dac9..54a8ed3 100755
+--- a/src/cmd/ksh93/tests/posix.sh
++++ b/src/cmd/ksh93/tests/posix.sh
+@@ -83,7 +83,6 @@ got=$(<out)
+ [[ $got == "$exp" ]] || err_exit "incorrect --posix settings on invoking hashbangless script from posix shell (direct)" \
+ 	"(expected $(printf %q "$exp"), got $(printf %q "$got"))"
+ 
+-: <<\DISABLED  # TODO: these do not pass yet, unless SHOPT_SPAWN is disabled.
+ (./script) >|out
+ got=$(<out)
+ [[ $got == "$exp" ]] || err_exit "incorrect --posix settings on invoking hashbangless script from posix shell (subshell)" \
+@@ -91,7 +90,6 @@ got=$(<out)
+ got=$(./script)
+ [[ $got == "$exp" ]] || err_exit "incorrect --posix settings on invoking hashbangless script from posix shell (comsub)" \
+ 	"(expected $(printf %q "$exp"), got $(printf %q "$got"))"
+-DISABLED
+ 
+ got=$("$SHELL" --posix -c "$(<script)")
+ [[ $got == "$exp" ]] || err_exit "incorrect --posix settings on invoking -c script from posix shell" \
+diff --git a/src/lib/libast/Mamfile b/src/lib/libast/Mamfile
+index 3bfdc79..17b3a1b 100644
+--- a/src/lib/libast/Mamfile
++++ b/src/lib/libast/Mamfile
+@@ -1139,13 +1139,6 @@ make install virtual
+ 			exec - compile %{<}
+ 		done
+ 
+-		make pathshell.o
+-			make path/pathshell.c
+-				prev include/ast.h
+-			done
+-			exec - compile %{<}
+-		done
+-
+ 		make pathcd.o
+ 			make path/pathcd.c
+ 				prev include/stk.h
+@@ -1155,18 +1148,6 @@ make install virtual
+ 			exec - compile %{<}
+ 		done
+ 
+-		make pathprog.o
+-			make path/pathprog.c
+-				make FEATURE/prog
+-					makp features/prog
+-					exec - invoke_iffe %{<}
+-				done
+-				prev include/ast_windows.h
+-				prev include/ast.h
+-			done
+-			exec - compile %{<}
+-		done
+-
+ 		make ftwalk.o
+ 			make misc/ftwalk.c
+ 				make include/ftwalk.h
+@@ -2646,15 +2627,6 @@ make install virtual
+ 			exec - compile %{<}
+ 		done
+ 
+-		make system.o
+-			make comp/system.c
+-				prev ast_map.h
+-				prev include/proc.h
+-				prev include/ast.h
+-			done
+-			exec - compile %{<}
+-		done
+-
+ 		make iblocks.o
+ 			make port/iblocks.c
+ 				prev include/ls.h
+diff --git a/src/lib/libast/comp/omitted.c b/src/lib/libast/comp/omitted.c
+index 0b3381e..6592b53 100644
+--- a/src/lib/libast/comp/omitted.c
++++ b/src/lib/libast/comp/omitted.c
+@@ -504,7 +504,7 @@ runve(int mode, const char* path, char* const* argv, char* const* envv)
+ 		p = v;
+ 		*p++ = (char*)path;
+ 		*p++ = (char*)path;
+-		path = (const char*)pathshell();
++		path = "/bin/sh.exe";
+ 		if (*argv)
+ 			argv++;
+ 		while (*p++ = (char*)*argv++);
+diff --git a/src/lib/libast/comp/system.c b/src/lib/libast/comp/system.c
+deleted file mode 100644
+index 64fa7e7..0000000
+--- a/src/lib/libast/comp/system.c
++++ /dev/null
+@@ -1,48 +0,0 @@
+-/***********************************************************************
+-*                                                                      *
+-*               This software is part of the ast package               *
+-*          Copyright (c) 1985-2011 AT&T Intellectual Property          *
+-*          Copyright (c) 2020-2023 Contributors to ksh 93u+m           *
+-*                      and is licensed under the                       *
+-*                 Eclipse Public License, Version 2.0                  *
+-*                                                                      *
+-*                A copy of the License is available at                 *
+-*      https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.html      *
+-*         (with md5 checksum 84283fa8859daf213bdda5a9f8d1be1d)         *
+-*                                                                      *
+-*                 Glenn Fowler <gsf@research.att.com>                  *
+-*                  David Korn <dgk@research.att.com>                   *
+-*                   Phong Vo <kpv@research.att.com>                    *
+-*                  Martijn Dekker <martijn@inlv.org>                   *
+-*            Johnothan King <johnothanking@protonmail.com>             *
+-*                                                                      *
+-***********************************************************************/
+-/*
+- * AST library system(3)
+- */
+-
+-#define system		______system
+-
+-#define _STDLIB_H_	1	/* UWIN workaround */
+-
+-#include <ast.h>
+-#include <proc.h>
+-
+-#undef	system
+-
+-#undef	_def_map_ast
+-#include <ast_map.h>
+-
+-extern int
+-system(const char* cmd)
+-{
+-	char*	sh[4];
+-
+-	if (!cmd)
+-		return !eaccess(pathshell(), X_OK);
+-	sh[0] = "sh";
+-	sh[1] = "-c";
+-	sh[2] = (char*)cmd;
+-	sh[3] = 0;
+-	return procrun(NULL, sh, 0);
+-}
+diff --git a/src/lib/libast/features/prog b/src/lib/libast/features/prog
+deleted file mode 100644
+index 365ce88..0000000
+--- a/src/lib/libast/features/prog
++++ /dev/null
+@@ -1,12 +0,0 @@
+-lib	getexecname,_NSGetExecutablePath
+-
+-tst	run{
+-	for p in /proc/self/exe /proc/self/path/a.out
+-	do	if	test -e $p
+-		then	echo "#define _PROC_PROG	\"$p\""
+-			break
+-		fi
+-	done
+-}end
+-
+-_hdr_macho_o_dyld = hdr mach-o/dyld
+diff --git a/src/lib/libast/include/ast.h b/src/lib/libast/include/ast.h
+index 1f9aa90..8cc5b6e 100644
+--- a/src/lib/libast/include/ast.h
++++ b/src/lib/libast/include/ast.h
+@@ -364,11 +364,9 @@ extern size_t		pathnative(const char*, char*, size_t);
+ extern char*		pathpath(char*, const char*, const char*, int);
+ extern char*		pathpath_20100601(const char*, const char*, int, char*, size_t);
+ extern size_t		pathposix(const char*, char*, size_t);
+-extern size_t		pathprog(const char*, char*, size_t);
+ extern char*		pathrepl(char*, const char*, const char*);
+ extern char*		pathrepl_20100601(char*, size_t, const char*, const char*);
+ extern int		pathsetlink(const char*, const char*);
+-extern char*		pathshell(void);
+ extern char*		pathtemp(char*, size_t, const char*, const char*, int*);
+ extern char*		pathtmp(char*, const char*, const char*, int*);
+ extern char*		setenviron(const char*);
+diff --git a/src/lib/libast/man/compat.3 b/src/lib/libast/man/compat.3
+index 8fb5d06..02d4df6 100644
+--- a/src/lib/libast/man/compat.3
++++ b/src/lib/libast/man/compat.3
+@@ -57,7 +57,6 @@ int	rmdir(const char*);
+ int	sigunblock(int);
+ double	strtod(const char*, char**);
+ long	strtol(const char*, char**, int);
+-int	system(const char*);
+ char*	tmpnam(char*);
+ int	unlink(const char*);
+ .EE
+diff --git a/src/lib/libast/man/path.3 b/src/lib/libast/man/path.3
+index f44142f..e13d697 100644
+--- a/src/lib/libast/man/path.3
++++ b/src/lib/libast/man/path.3
+@@ -56,7 +56,6 @@ char*     pathnext(char* \fIpath\fP, char* \fIextra\fP, long* \fIvisits\fP);
+ char*     pathpath(char* \fIpath\fP, const char* \fIp\fP, const char* \fIa\fP, int \fImode\fP);
+ char*     pathrepl(char* \fIpath\fP, const char* \fImatch\fP, const char* \fIreplace\fP);
+ int       pathsetlink(const char* \fItext\fP, char* \fIname\fP);
+-char*     pathshell(void);
+ int       pathstat(const char* \fIpath\fP, struct stat* \fIst\fP);
+ char*     pathtemp(char* \fIpath\fP, const char* \fIdir\fP, const char* \fIpfx\fP);
+ .EE
+@@ -323,18 +322,6 @@ above for weird
+ .IR universe (1)
+ interactions hidden by this routine.
+ .PP
+-.L pathshell
+-returns a pointer to the pathname for the shell for the current process.
+-The
+-.L SHELL
+-environment variable is first consulted, but is rejected under suspicious
+-ownership/setuid conditions of if it seems to point to
+-.IR csh (1) ;
+-otherwise
+-.L confstr(_CS_SHELL,...)
+-is used.
+-A valid string is always returned.
+-.PP
+ .L pathstat
+ first tries
+ .LI stat( path,st )
+diff --git a/src/lib/libast/man/proc.3 b/src/lib/libast/man/proc.3
+index a338130..9aa66e9 100644
+--- a/src/lib/libast/man/proc.3
++++ b/src/lib/libast/man/proc.3
+@@ -80,8 +80,9 @@ If
+ .I command
+ is
+ .L 0
+-then the current shell is used (see
+-.IR pathshell (3)).
++then the shell returned by
++.IR astconf (3)
++is used.
+ If
+ .I envv
+ is not
+diff --git a/src/lib/libast/misc/cmdarg.c b/src/lib/libast/misc/cmdarg.c
+index bb4a4e3..6f8b24f 100644
+--- a/src/lib/libast/misc/cmdarg.c
++++ b/src/lib/libast/misc/cmdarg.c
+@@ -128,7 +128,7 @@ cmdopen_20120411(char** argv, int argmax, int size, const char* argpat, Cmddisc_
+ 		x = ARG_MAX;
+ 	if (size <= 0 || size > x)
+ 		size = x;
+-	sh = pathshell();
++	sh = astconf("SH", NULL, NULL);
+ 	m = n + (argc + 4) * sizeof(char**) + strlen(sh) + 1;
+ 	m = roundof(m, sizeof(char**));
+ 	if (size < m)
+diff --git a/src/lib/libast/misc/procopen.c b/src/lib/libast/misc/procopen.c
+index 5cecfd2..a6b396b 100644
+--- a/src/lib/libast/misc/procopen.c
++++ b/src/lib/libast/misc/procopen.c
+@@ -719,7 +719,7 @@ procopen(const char* cmd, char** argv, char** envv, long* modv, int flags)
+ 			*p = path;
+ 			*--p = "sh";
+ 		}
+-		strcpy(env + 2, (flags & PROC_PARANOID) ? astconf("SH", NULL, NULL) : pathshell());
++		strcpy(env + 2, astconf("SH", NULL, NULL));
+ 		if (forked || (flags & PROC_OVERLAY))
+ 			execve(env + 2, p, environ);
+ #if _use_spawnveg
+diff --git a/src/lib/libast/path/pathprog.c b/src/lib/libast/path/pathprog.c
+deleted file mode 100644
+index 09a6148..0000000
+--- a/src/lib/libast/path/pathprog.c
++++ /dev/null
+@@ -1,124 +0,0 @@
+-/***********************************************************************
+-*                                                                      *
+-*               This software is part of the ast package               *
+-*          Copyright (c) 1985-2012 AT&T Intellectual Property          *
+-*          Copyright (c) 2020-2023 Contributors to ksh 93u+m           *
+-*                      and is licensed under the                       *
+-*                 Eclipse Public License, Version 2.0                  *
+-*                                                                      *
+-*                A copy of the License is available at                 *
+-*      https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.html      *
+-*         (with md5 checksum 84283fa8859daf213bdda5a9f8d1be1d)         *
+-*                                                                      *
+-*                 Glenn Fowler <gsf@research.att.com>                  *
+-*                  David Korn <dgk@research.att.com>                   *
+-*                   Phong Vo <kpv@research.att.com>                    *
+-*                  Martijn Dekker <martijn@inlv.org>                   *
+-*                                                                      *
+-***********************************************************************/
+-/*
+- * Glenn Fowler
+- * AT&T Research
+- *
+- * return the full path of the current program in path
+- * command!=0 is used as a default
+- */
+-
+-#include <ast.h>
+-
+-#if _WINIX
+-#include <ast_windows.h>
+-#include <ctype.h>
+-#endif
+-
+-#include "FEATURE/prog"
+-
+-#if _hdr_macho_o_dyld && _lib__NSGetExecutablePath
+-#include <mach-o/dyld.h>
+-#else
+-#undef	_lib__NSGetExecutablePath
+-#endif
+-
+-static size_t
+-prog(const char* command, char* path, size_t size)
+-{
+-	ssize_t		n;
+-	char*		s;
+-#if _WINIX
+-	char*		t;
+-	char*		e;
+-	int		c;
+-	int		q;
+-#endif
+-#if _lib__NSGetExecutablePath
+-	uint32_t	z;
+-#endif
+-
+-#ifdef _PROC_PROG
+-	if ((n = readlink(_PROC_PROG, path, size)) > 0 && *path == '/')
+-	{
+-		if (n < size)
+-			path[n] = 0;
+-		return n;
+-	}
+-#endif
+-#if _lib_getexecname
+-	if ((s = (char*)getexecname()) && *s == '/')
+-		goto found;
+-#endif
+-#if _lib__NSGetExecutablePath
+-	z = size;
+-	if (!_NSGetExecutablePath(path, &z) && *path == '/')
+-		return strlen(path);
+-#endif
+-#if _WINIX
+-	if (s = GetCommandLine())
+-	{
+-		n = 0;
+-		q = 0;
+-		t = path;
+-		e = path + size - 1;
+-		while (c = *s++)
+-		{
+-			if (c == q)
+-				q = 0;
+-			else if (!q && c == '"')
+-				q = c;
+-			else if (!q && isspace(c))
+-				break;
+-			else if (t < e)
+-				*t++ = c == '\\' ? '/' : c;
+-			else
+-				n++;
+-		}
+-		if (t < e)
+-			*t = 0;
+-		return (t - path) + n;
+-	}
+-#endif
+-	if (command)
+-	{
+-		s = (char*)command;
+-		goto found;
+-	}
+-	return 0;
+- found:
+-	n = strlen(s);
+-	if (n < size)
+-		memcpy(path, s, n + 1);
+-	return n;
+-}
+-
+-size_t
+-pathprog(const char* command, char* path, size_t size)
+-{
+-	char*		rel;
+-	ssize_t		n;
+-
+-	if ((n = prog(command, path, size)) > 0 && n < size && *path != '/' && (rel = strdup(path)))
+-	{
+-		n = pathpath(rel, NULL, PATH_REGULAR|PATH_EXECUTE, path, size) ? strlen(path) : 0;
+-		free(rel);
+-	}
+-	return n;
+-}
+diff --git a/src/lib/libast/path/pathshell.c b/src/lib/libast/path/pathshell.c
+deleted file mode 100644
+index 7537c53..0000000
+--- a/src/lib/libast/path/pathshell.c
++++ /dev/null
+@@ -1,115 +0,0 @@
+-/***********************************************************************
+-*                                                                      *
+-*               This software is part of the ast package               *
+-*          Copyright (c) 1985-2011 AT&T Intellectual Property          *
+-*          Copyright (c) 2020-2023 Contributors to ksh 93u+m           *
+-*                      and is licensed under the                       *
+-*                 Eclipse Public License, Version 2.0                  *
+-*                                                                      *
+-*                A copy of the License is available at                 *
+-*      https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.html      *
+-*         (with md5 checksum 84283fa8859daf213bdda5a9f8d1be1d)         *
+-*                                                                      *
+-*                 Glenn Fowler <gsf@research.att.com>                  *
+-*                  David Korn <dgk@research.att.com>                   *
+-*                   Phong Vo <kpv@research.att.com>                    *
+-*                  Martijn Dekker <martijn@inlv.org>                   *
+-*            Johnothan King <johnothanking@protonmail.com>             *
+-*                                                                      *
+-***********************************************************************/
+-/*
+- * G. S. Fowler
+- * D. G. Korn
+- * AT&T Bell Laboratories
+- *
+- * shell library support
+- */
+-
+-#include <ast.h>
+-#include <sys/stat.h>
+-
+-/*
+- * return pointer to the full path name of the shell
+- *
+- * SHELL is read from the environment and must start with /
+- *
+- * if setuid or setgid then the executable and its containing
+- * directory must not be owned by the real user/group
+- *
+- * root/administrator has its own test
+- *
+- * astconf("SH",NULL,NULL) is returned by default
+- *
+- * NOTE: csh is rejected because the bsh/csh differentiation is
+- *       not done for `csh script arg ...'
+- */
+-
+-#ifdef _WINIX
+-#	define EXE "?(.exe)"
+-#else
+-#	define EXE
+-#endif
+-
+-char*
+-pathshell(void)
+-{
+-	char*		sh;
+-	int		ru;
+-	int		eu;
+-	int		rg;
+-	int		eg;
+-	struct stat	st;
+-
+-	static char*	val;
+-
+-	if ((sh = getenv("SHELL")) && *sh == '/' && strmatch(sh, "*/(sh|*[!cC]sh)*([[:digit:]])?(-+([.[:alnum:]]))" EXE))
+-	{
+-		if (!(ru = getuid()) || !eaccess("/bin", W_OK))
+-		{
+-			if (stat(sh, &st))
+-				goto defshell;
+-			if (ru != st.st_uid && !strmatch(sh, "?(/usr)?(/local)/?([ls])bin/?([[:lower:]])sh" EXE))
+-				goto defshell;
+-		}
+-		else
+-		{
+-			eu = geteuid();
+-			rg = getgid();
+-			eg = getegid();
+-			if (ru != eu || rg != eg)
+-			{
+-				char*	s;
+-				char	dir[PATH_MAX];
+-
+-				s = sh;
+-				for (;;)
+-				{
+-					if (stat(s, &st))
+-						goto defshell;
+-					if (ru != eu && st.st_uid == ru)
+-						goto defshell;
+-					if (rg != eg && st.st_gid == rg)
+-						goto defshell;
+-					if (s != sh)
+-						break;
+-					if (strlen(s) >= sizeof(dir))
+-						goto defshell;
+-					strcpy(dir, s);
+-					if (!(s = strrchr(dir, '/')))
+-						break;
+-					*s = 0;
+-					s = dir;
+-				}
+-			}
+-		}
+-		return sh;
+-	}
+- defshell:
+-	if (!(sh = val))
+-	{
+-		if (!*(sh = astconf("SH", NULL, NULL)) || *sh != '/' || eaccess(sh, X_OK) || !(sh = strdup(sh)))
+-			sh = "/bin/sh";
+-		val = sh;
+-	}
+-	return sh;
+-}
+-- 
+2.50.1
+
