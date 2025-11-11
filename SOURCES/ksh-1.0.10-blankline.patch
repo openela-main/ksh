@@ -1,0 +1,194 @@
+From a1fcad4bf65fe26a3f9a386b63732ab151ce03ec Mon Sep 17 00:00:00 2001
+From: Martijn Dekker <martijn@inlv.org>
+Date: Thu, 5 Dec 2024 02:24:39 +0000
+Subject: [PATCH] vi: Fix recalling lines starting with whitespace (re:
+ 5eeeed06)
+
+@jghub reports:
+> if for some reason a command is entered with leading whitespace,
+> the leading whitespace is preserved in the history file (in
+> ksh93u+, too). such commands can be recalled from history in 93u+
+> without problem, both, in vi and emacs mode.
+>
+> but in 93u+m such entries are simply ignored when using vi-mode
+> (set -o vi), i.e. the k and j commands skip over such entries.
+> emacs mode still works just fine.
+
+Analysis: the blankline() function in vi.c and emacs.c is used to
+check for whitespace up to the cursor position. This is used for
+tab completion and fullscreen editor invocation, where that is
+okay, and for history recall, where that should be checking the
+entire line instead.
+
+In emacs.c this was not really a problem because arrowing up (or
+^P) positions the cursor to the end of the line anyway. But in vi,
+arrowing up (or 'k') positions the cursor at the beginning.
+
+src/cmd/ksh93/edit/vi.c:
+- Amend blankline() with an 'uptocursor' argument. If nonzero, it
+  checks the current line for whitespace up to the cursor position,
+  otherwise it checks the entire line.
+- Pass uptocursor==0 to blankline() for history recall and 1 for
+  tab completion.
+
+src/cmd/ksh93/edit/emacs.c:
+- Apply the same change here for consistency, even though it's
+  perhaps not really necessary. If ever a form of recall is added
+  that doesn't position the cursor at the end, then that won't
+  introduce this bug there.
+
+Thanks to @pghvlaans for input into the fix.
+Resolves: https://github.com/ksh93/ksh/issues/799
+---
+ src/cmd/ksh93/edit/emacs.c | 14 +++++++-------
+ src/cmd/ksh93/edit/vi.c    | 16 ++++++++--------
+ src/cmd/ksh93/tests/pty.sh | 12 ++++++++++++
+ 3 files changed, 27 insertions(+), 15 deletions(-)
+
+diff --git a/src/cmd/ksh93/edit/emacs.c b/src/cmd/ksh93/edit/emacs.c
+index 128e592..408f6e7 100644
+--- a/src/cmd/ksh93/edit/emacs.c
++++ b/src/cmd/ksh93/edit/emacs.c
+@@ -178,7 +178,7 @@ static void search(Emacs_t*,genchar*,int);
+ static void setcursor(Emacs_t*,int, int);
+ static void show_info(Emacs_t*,const char*);
+ static void xcommands(Emacs_t*,int);
+-static char blankline(Emacs_t*, genchar*);
++static int blankline(Emacs_t*, genchar*, int);
+ 
+ int ed_emacsread(void *context, int fd,char *buff,int scend, int reedit)
+ {
+@@ -720,9 +720,9 @@ update:
+ 			cur = eol;
+ 			draw(ep,UPDATE);
+ 			/* skip blank lines when going up/down in history */
+-			if(c==cntl('N') && hline != histlines && blankline(ep,out))
++			if(c==cntl('N') && hline != histlines && blankline(ep,out,0))
+ 				ed_ungetchar(ep->ed,cntl('N'));
+-			else if(c==cntl('P') && hline != hismin && blankline(ep,out))
++			else if(c==cntl('P') && hline != hismin && blankline(ep,out,0))
+ 				ed_ungetchar(ep->ed,cntl('P'));
+ 			continue;
+ 		}
+@@ -1023,7 +1023,7 @@ static int escape(Emacs_t* ep,genchar *out,int count)
+ 		case '*':		/* filename expansion */
+ 		case '=':	/* escape = - list all matching file names */
+ 		{
+-			if(cur<1 || blankline(ep,out))
++			if(cur<1 || blankline(ep,out,1))
+ 			{
+ 				beep();
+ 				return -1;
+@@ -1312,7 +1312,7 @@ static void xcommands(Emacs_t *ep,int count)
+                 case cntl('E'):	/* invoke emacs on current command */
+ 			if(eol>=0 && sh.hist_ptr)
+ 			{
+-				if(blankline(ep,drawbuff))
++				if(blankline(ep,drawbuff,1))
+ 				{
+ 					cur = 0;
+ 					eol = 1;
+@@ -1785,11 +1785,11 @@ static int _isword(int c)
+ /*
+  * determine if the command line is blank (empty or all whitespace)
+  */
+-static char blankline(Emacs_t *ep, genchar *out)
++static int blankline(Emacs_t *ep, genchar *out, int uptocursor)
+ {
+ 	int x;
+ 	ep->mark = cur;
+-	for(x=0; x < cur; x++)
++	for(x=0; uptocursor ? (x < cur) : (x <= eol); x++)
+ 	{
+ #if SHOPT_MULTIBYTE
+ 		if(!iswspace((wchar_t)out[x]))
+diff --git a/src/cmd/ksh93/edit/vi.c b/src/cmd/ksh93/edit/vi.c
+index fac40ee..852613c 100644
+--- a/src/cmd/ksh93/edit/vi.c
++++ b/src/cmd/ksh93/edit/vi.c
+@@ -176,7 +176,7 @@ typedef struct _vi_
+ 
+ static const char paren_chars[] = "([{)]}";   /* for % command */
+ 
+-static char	blankline(Vi_t*);
++static int	blankline(Vi_t*, int);
+ static void	cursor(Vi_t*, int);
+ static void	del_line(Vi_t*,int);
+ static int	getcount(Vi_t*,int);
+@@ -667,9 +667,9 @@ static int cntlmode(Vi_t *vp)
+ 			}
+ #endif /* SHOPT_EDPREDICT */
+ 			/* skip blank lines when going up/down in history */
+-			if((c=='k' || c=='-') && curhline != histmin && blankline(vp))
++			if((c=='k' || c=='-') && curhline != histmin && blankline(vp,0))
+ 				ed_ungetchar(vp->ed,'k');
+-			else if((c=='j' || c=='+') && curhline != histmax && blankline(vp))
++			else if((c=='j' || c=='+') && curhline != histmax && blankline(vp,0))
+ 				ed_ungetchar(vp->ed,'j');
+ 			break;
+ 
+@@ -693,7 +693,7 @@ static int cntlmode(Vi_t *vp)
+ 		case 'v':
+ 			if(vp->repeat_set==0)
+ 			{
+-				if(blankline(vp) || cur_virt == INVALID)
++				if(blankline(vp,1) || cur_virt == INVALID)
+ 				{
+ 					cur_virt = 0;
+ 					last_virt = cur_virt;
+@@ -1294,7 +1294,7 @@ static void getline(Vi_t* vp,int mode)
+ 
+ 		case '\t':		/** command completion **/
+ 		{
+-			if(blankline(vp))
++			if(blankline(vp,1))
+ 			{
+ 				ed_ringbell();
+ 				break;
+@@ -2317,7 +2317,7 @@ addin:
+ 	case '\\':		/** do file name completion in place **/
+ 	case '=':		/** list file name expansions **/
+ 	{
+-		if(cur_virt == INVALID || blankline(vp))
++		if(cur_virt == INVALID || blankline(vp,1))
+ 			return BAD;
+ 		/* FALLTHROUGH */
+ 		save_v(vp);
+@@ -2673,10 +2673,10 @@ yankeol:
+ /*
+  * determine if the command line is blank (empty or all whitespace)
+  */
+-static char blankline(Vi_t *vp)
++static int blankline(Vi_t *vp, int uptocursor)
+ {
+ 	int x;
+-	for(x=0; x <= cur_virt; x++)
++	for(x=0; x <= (uptocursor ? cur_virt : last_virt); x++)
+ 	{
+ #if SHOPT_MULTIBYTE
+ 		if(!iswspace((wchar_t)virtual[x]))
+diff --git a/src/cmd/ksh93/tests/pty.sh b/src/cmd/ksh93/tests/pty.sh
+index b4f8e28..ea0c616 100755
+--- a/src/cmd/ksh93/tests/pty.sh
++++ b/src/cmd/ksh93/tests/pty.sh
+@@ -1269,5 +1269,17 @@ w print Exit status $?
+ u ^Exit status 0\r\n$
+ !
+ 
++((SHOPT_VSH)) && tst $LINENO <<"!"
++L 'k' skips over history entries starting with whitespace
++# https://github.com/ksh93/ksh/issues/799
++
++d 40
++p :test-1:
++w   true
++p :test-2:
++c \Ek
++r :test-2:   true
++!
++
+ # ======
+ exit $((Errors<125?Errors:125))
+-- 
+2.49.0
+

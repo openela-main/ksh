@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      1.0.6
-Release:      7%{?dist}.2
+Release:      14%{?dist}
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -35,9 +35,30 @@ Patch6: ksh-1.0.11-SHLVL.patch
 #upstream commit: https://github.com/ksh93/ksh/commit/5def43983de3ecfa38c805c02a1f0d6f1581160c
 Patch7: ksh-1.0.11-redir.patch
 
+#upstream commit: https://github.com/ksh93/ksh/commit/6668c3eb0bdc48335120e7c48590ab46af0ef0f3
+Patch8: ksh-1.0.10-pjob.patch
+
+#upstream commit: https://github.com/ksh93/ksh/commit/b15f63284bcd656729be61be6434376876be5bfc
+#upstream commit: https://github.com/ksh93/ksh/commit/5e3a169785139809f1f733314f5660769c86d10c (test fix)
+Patch9: ksh-1.0.9-no-TERM-env-segfault.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/4350174a5d4acabf78f97b28c6d0ae68ec703e78
+Patch10: ksh-1.0.11-stty-noecho.patch
+
 # upstream commit: https://github.com/ksh93/ksh/commit/96d73c08a2786806f3def1fda66641b81e0af988
-Patch8: ksh-1.0.11-ssh-multibyte-long-paste.patch
-Patch9: RHEL-112564.patch
+Patch11: ksh-1.0.11-ssh-multibyte-long-paste.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/9f03b3bdb577ce74be3122d533c02830e3038e54
+Patch12: ksh-1.0.11-segfault-sigwinch.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/a1fcad4bf65fe26a3f9a386b63732ab151ce03ec
+Patch13: ksh-1.0.10-blankline.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/bc56018765163a8059600f5205e9e2b1f4059873
+Patch14: ksh-1.0.10-sigpipe.patch
+
+# https://github.com/ksh93/ksh/commit/970812e39c236ff385e440ac6d458d196c237667
+Patch15: ksh-1.0.12-security.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -160,13 +181,37 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
-* Wed Oct 01 2025 RHEL Packaging Agent <jotnar@redhat.com> - 3:1.0.6-7.2
-- Fix 'stty -echo' in scripts
-- Resolves: RHEL-112564
+* Wed Aug 06 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-14
+- Fix arbitrary command execution/code injection bugs
+  Resolves: RHEL-99063
 
-* Tue Apr 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-7
+* Wed Jul 09 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-13
+- Fix SIGPIPE subshell regression
+  Resolves: RHEL-92646
+
+* Mon Jun 02 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-12
+- Fix recalling lines starting with whitespace
+  Resolves: RHEL-74464
+
+* Mon May 19 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-11
+- Fix segfault upon SIGWINCH after 'stty -echo'
+  Resolves: RHEL-91097
+
+* Wed Apr 16 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-10
 - Fix long multibyte characters paste issue via ssh
-  Resolves: RHEL-87336
+  Resolves: RHEL-87561
+
+* Mon Mar 31 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-9
+- Fix 'stty -echo' in scripts
+  Resolves: RHEL-83043
+
+* Sat Mar 29 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-8
+- Fix segfault on starting ksh with no TERM env var
+  Resolves: RHEL-83283
+
+* Mon Feb 17 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-7
+- Change p_job variable type from short to int
+  Resolves: RHEL-64299
 
 * Wed Jan 22 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-6
 - Add forking workaround for block stdout redir

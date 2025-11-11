@@ -1,0 +1,101 @@
+From 685f18d36e162c6f6baf44e1c2c8c762ee41466d Mon Sep 17 00:00:00 2001
+From: Vincent Mihalkovic <vmihalko@redhat.com>
+Date: Sat, 13 Jul 2024 23:45:07 +0200
+Subject: [PATCH] jobs: change p_job variable type from short to int (#763)
+
+This change addresses an issue where ksh has undefined behavior
+when the number of jobs exceeds `2^15 - 1` (32767), which is the
+maximum value for a `short`. The short integer overflow happened in
+jobs.c, line 1210.
+---
+ src/cmd/ksh93/include/jobs.h    |  5 +++--
+ src/cmd/ksh93/sh/jobs.c         | 11 ++++++-----
+ 2 files changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/src/cmd/ksh93/include/jobs.h b/src/cmd/ksh93/include/jobs.h
+index 4ae48d70fb7a..758804118f30 100644
+--- a/src/cmd/ksh93/include/jobs.h
++++ b/src/cmd/ksh93/include/jobs.h
+@@ -2,7 +2,7 @@
+ *                                                                      *
+ *               This software is part of the ast package               *
+ *          Copyright (c) 1982-2011 AT&T Intellectual Property          *
+-*          Copyright (c) 2020-2023 Contributors to ksh 93u+m           *
++*          Copyright (c) 2020-2024 Contributors to ksh 93u+m           *
+ *                      and is licensed under the                       *
+ *                 Eclipse Public License, Version 2.0                  *
+ *                                                                      *
+@@ -14,6 +14,7 @@
+ *                  Martijn Dekker <martijn@inlv.org>                   *
+ *            Johnothan King <johnothanking@protonmail.com>             *
+ *               Anuradha Weeraman <anuradha@debian.org>                *
++*               Vincent Mihalkovic <vmihalko@redhat.com>               *
+ *                                                                      *
+ ***********************************************************************/
+ #ifndef JOB_NFLAG
+@@ -51,7 +52,7 @@ struct process
+ 	pid_t		p_pid;		/* process ID */
+ 	pid_t		p_pgrp;		/* process group */
+ 	pid_t		p_fgrp;		/* process group when stopped */
+-	short		p_job;		/* job number of process */
++	int		p_job;		/* job number of process */
+ 	unsigned short	p_exit;		/* exit value or signal number */
+ 	unsigned short	p_exitmin;	/* minimum exit value for xargs */
+ 	unsigned short	p_flag;		/* flags - see below */
+diff --git a/src/cmd/ksh93/sh/jobs.c b/src/cmd/ksh93/sh/jobs.c
+index 871658256f15..86bbe5a9c949 100644
+--- a/src/cmd/ksh93/sh/jobs.c
++++ b/src/cmd/ksh93/sh/jobs.c
+@@ -13,6 +13,7 @@
+ *                  David Korn <dgk@research.att.com>                   *
+ *                  Martijn Dekker <martijn@inlv.org>                   *
+ *            Johnothan King <johnothanking@protonmail.com>             *
++*               Vincent Mihalkovic <vmihalko@redhat.com>               *
+ *                                                                      *
+ ***********************************************************************/
+ /*
+@@ -437,7 +438,7 @@ int job_reap(int sig)
+ 			pw->p_flag &= ~P_NOTIFY;
+ 		if(job.jobcontrol && pid==pw->p_fgrp && pid==tcgetpgrp(JOBTTY))
+ 		{
+-			px = job_byjid((int)pw->p_job);
++			px = job_byjid(pw->p_job);
+ 			for(; px && (px->p_flag&P_DONE); px=px->p_nxtproc);
+ 			if(!px)
+ 				tcsetpgrp(JOBTTY,job.mypid);
+@@ -1528,7 +1529,7 @@ int job_switch(struct process *pw,int bgflag)
+ {
+ 	const char *msg;
+ 	job_lock();
+-	if(!pw || !(pw=job_byjid((int)pw->p_job)))
++	if(!pw || !(pw=job_byjid(pw->p_job)))
+ 	{
+ 		job_unlock();
+ 		return 1;
+@@ -1542,7 +1543,7 @@ int job_switch(struct process *pw,int bgflag)
+ 	}
+ 	if(bgflag=='b')
+ 	{
+-		sfprintf(outfile,"[%d]\t",(int)pw->p_job);
++		sfprintf(outfile,"[%d]\t",pw->p_job);
+ 		sh.bckpid = pw->p_pid;
+ 		pw->p_flag |= P_BG;
+ 		msg = "&";
+@@ -1623,7 +1624,7 @@ static struct process *job_unpost(struct process *pwtop,int notify)
+ 	sfprintf(sfstderr,"ksh: job line %4d: drop PID=%lld critical=%d PID=%d env=%u\n",__LINE__,(Sflong_t)sh.current_pid,job.in_critical,pwtop->p_pid,pwtop->p_env);
+ 	sfsync(sfstderr);
+ #endif /* DEBUG */
+-	pwtop = pw = job_byjid((int)pwtop->p_job);
++	pwtop = pw = job_byjid(pwtop->p_job);
+ 	if(!pw)
+ 		return NULL;
+ #if SHOPT_BGX
+@@ -1664,7 +1665,7 @@ static struct process *job_unpost(struct process *pwtop,int notify)
+ 	sfprintf(sfstderr,"ksh: job line %4d: free PID=%lld critical=%d job=%d\n",__LINE__,(Sflong_t)sh.current_pid,job.in_critical,pwtop->p_job);
+ 	sfsync(sfstderr);
+ #endif /* DEBUG */
+-	job_free((int)pwtop->p_job);
++	job_free(pwtop->p_job);
+ 	return NULL;
+ }
+ 

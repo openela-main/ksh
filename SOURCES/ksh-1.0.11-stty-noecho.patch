@@ -1,4 +1,4 @@
-From e8554b5131fc32b26a6a0b0ab5cf24839e30161a Mon Sep 17 00:00:00 2001
+From 4350174a5d4acabf78f97b28c6d0ae68ec703e78 Mon Sep 17 00:00:00 2001
 From: Martijn Dekker <martijn@inlv.org>
 Date: Sun, 30 Mar 2025 00:14:35 +0000
 Subject: [PATCH] Fix 'stty -echo' in scripts (re: 41ebb55a)
@@ -56,14 +56,14 @@ src/cmd/ksh93/sh/jobs.c: job_wait():
 
 Resolves: https://github.com/ksh93/ksh/issues/836
 ---
- src/cmd/ksh93/sh/jobs.c | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
+ src/cmd/ksh93/sh/jobs.c         | 4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/src/cmd/ksh93/sh/jobs.c b/src/cmd/ksh93/sh/jobs.c
-index be333b2..081e73a 100644
+index c65bc6e66094..513afb5582ab 100644
 --- a/src/cmd/ksh93/sh/jobs.c
 +++ b/src/cmd/ksh93/sh/jobs.c
-@@ -1492,9 +1492,9 @@ int	job_wait(pid_t pid)
+@@ -1420,9 +1420,9 @@ int	job_wait(pid_t pid)
  			kill(sh.current_pid,SIGTSTP);
  		}
  	}
@@ -75,6 +75,3 @@ index be333b2..081e73a 100644
  		{
  			if(pw->p_pgrp==0)
  				pw->p_pgrp = pw->p_pid;
--- 
-2.47.3
-

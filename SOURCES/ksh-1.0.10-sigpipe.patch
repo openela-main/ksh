@@ -1,0 +1,38 @@
+From bc56018765163a8059600f5205e9e2b1f4059873 Mon Sep 17 00:00:00 2001
+From: Martijn Dekker <martijn@inlv.org>
+Date: Sat, 20 Jul 2024 01:40:35 +0100
+Subject: [PATCH] Re-fix SIGPIPE subshell regression (re: 227c6379, 4df6d674)
+
+It was committed prematurely and still broken on most systems.
+
+src/cmd/ksh93/sh/fault.c: sh_done():
+- Revert changes.
+
+src/cmd/ksh93/sh/jobs.c: job_wait():
+- Do not set sh.chldexitsig in the first place if the signal is
+  SIGPIPE and we're in a real subshell.
+
+This workaround passes all the tests I can throw at it.
+
+Resolves: https://github.com/ksh93/ksh/issues/765
+---
+ src/cmd/ksh93/sh/jobs.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/cmd/ksh93/sh/jobs.c b/src/cmd/ksh93/sh/jobs.c
+index f8c4d5f..580dae0 100644
+--- a/src/cmd/ksh93/sh/jobs.c
++++ b/src/cmd/ksh93/sh/jobs.c
+@@ -1447,7 +1447,8 @@ int	job_wait(pid_t pid)
+ 						if(px->p_flag&P_SIGNALLED)
+ 						{
+ 							sh.exitval |= SH_EXITSIG;
+-							sh.chldexitsig = 1;
++							if(!(sh.realsubshell && px->p_exit==SIGPIPE))
++								sh.chldexitsig = 1;
+ 						}
+ 						if(intr)
+ 							px->p_flag &= ~P_EXITSAVE;
+-- 
+2.50.0
+

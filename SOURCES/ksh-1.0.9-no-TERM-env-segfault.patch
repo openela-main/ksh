@@ -1,0 +1,59 @@
+From 26eec44e33ed4a48cb7ba34706d96387385d1980 Mon Sep 17 00:00:00 2001
+From: Johnothan King <johnothanking@protonmail.com>
+Date: Thu, 22 Feb 2024 15:26:57 -0800
+Subject: [PATCH] Fix segfault on starting ksh with no TERM env var (#723)
+
+This commit fixes a crash that prevented ksh from starting up in
+single user mode on DragonFlyBSD and NetBSD.
+
+src/cmd/ksh93/edit/edit.c:
+- Make sure the np node for $TERM is not null before checking for
+  an export attribute.
+
+Co-authored-by: Martijn Dekker <martijn@inlv.org>
+Resolves: https://github.com/ksh93/ksh/issues/722
+---
+ src/cmd/ksh93/edit/edit.c  |  2 +-
+ src/cmd/ksh93/tests/pty.sh | 14 ++++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/cmd/ksh93/edit/edit.c b/src/cmd/ksh93/edit/edit.c
+index 32e1e83..0ac54ba 100644
+--- a/src/cmd/ksh93/edit/edit.c
++++ b/src/cmd/ksh93/edit/edit.c
+@@ -614,7 +614,7 @@ void	ed_setup(Edit_t *ep, int fd, int reedit)
+ 		static char *oldterm;
+ 		Namval_t *np = nv_search("TERM",sh.var_tree,0);
+ 		char *term = NULL;
+-		if(nv_isattr(np,NV_EXPORT))
++		if(np && nv_isattr(np,NV_EXPORT))
+ 			term = nv_getval(np);
+ 		if(!term)
+ 			term = "";
+diff --git a/src/cmd/ksh93/tests/pty.sh b/src/cmd/ksh93/tests/pty.sh
+index 5dbdf6c..b4f8e28 100755
+--- a/src/cmd/ksh93/tests/pty.sh
++++ b/src/cmd/ksh93/tests/pty.sh
+@@ -1255,5 +1255,19 @@ w _ksh_93u_m_cmdcompl\t
+ r :test-2: _ksh_93u_m_cmdcomplete_test_ \r\n$
+ !
+ 
++((multiline && (SHOPT_VSH || SHOPT_ESH))) && TERM=vt100 tst $LINENO <<"!"
++L crash when TERM is undefined
++# https://github.com/ksh93/ksh/issues/722
++
++d 40
++p :test-1:
++w unset TERM
++p :test-2:
++w "$SHELL"
++p :test-3:
++w print Exit status $?
++u ^Exit status 0\r\n$
++!
++
+ # ======
+ exit $((Errors<125?Errors:125))
+-- 
+2.49.0
+
