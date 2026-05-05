@@ -1,0 +1,321 @@
+From aa75399b030dfb0efc39be6d07c627aedbc2d2c1 Mon Sep 17 00:00:00 2001
+From: Johnothan King <johnothanking@protonmail.com>
+Date: Thu, 29 Jan 2026 16:23:45 -0800
+Subject: [PATCH] Fix /dev/fd/1 memory fault and $0 for /dev/fd scripts
+
+Changes:
+
+- sh_init(): Don't set $0 to the path to ksh. The correct behavior
+  is to always use the script name, even when it's a /dev/fd file.
+  The behavior of ksh93 should match that of bash and other shells.
+  Please read:
+  https://github.com/ksh93/ksh/pull/866#issuecomment-2968762167
+  https://github.com/ksh93/ksh/issues/874#issuecomment-2977615731
+
+- sh_main(): Do not attempt to optimize away sh_open() for the
+  stdio fds (0, 1, 2) because that can cause buggy behavior. Ksh's
+  handling of /dev/fd/1 and /dev/stdin should not differ. See:
+  https://github.com/ksh93/ksh/pull/879#issuecomment-2989729921
+
+- exfile(): Don't dup or close fds for /dev/fd scripts with a file
+  descriptor > 2. Those should be left open pursuant to the $0 name
+  of the script. (This cannot be done safely for fds 1 and 2, so
+  the stdio fds are all dup'ed, but not closed.)
+
+- sh_main(): If the fd obtained for the script by sh_open() is
+  <= 2, that means the shell was opened with one of the stdio fds
+  closed, so for correct behavior use sh_iomovefd() to keep the
+  stdio fd closed.
+
+- sh_iomovefd(): As an optimization, move the fd to a number that's
+  either >= 3 or >= 10, depending on what is most appropriate. This
+  avoids a possible inefficient scenario of dup'ing an fd from
+  0 -> 3 -> 10 (less syscalls is better for performance).
+
+- sh_main(): Use O_CLOEXEC in advance for the fd (which is
+  guaranteed to get close-on-exec via a later fcntl call; if we
+  don't end up calling fcntl for whatever reason O_CLOEXEC will
+  help avoid an extra syscall).
+
+- basic.sh: Add regression tests for $0 and its associated fd. For
+  the time being I've omitted a /dev/fd/1 regression test because I
+  can't get one to work correctly with the pty tool.
+
+Resolves: https://github.com/ksh93/ksh/issues/874
+Resolves: https://github.com/ksh93/ksh/issues/877
+Resolves: https://github.com/ksh93/ksh/pull/879
+---
+diff --git a/src/cmd/ksh93/include/io.h b/src/cmd/ksh93/include/io.h
+index a128393..0c295dd 100644
+--- a/src/cmd/ksh93/include/io.h
++++ b/src/cmd/ksh93/include/io.h
+@@ -67,7 +67,7 @@
+ 
+ extern int	sh_iocheckfd(Shell_t*,int);
+ extern void 	sh_ioinit(Shell_t*);
+-extern int 	sh_iomovefd(int);
++extern int 	sh_iomovefd(int,int);
+ extern int	sh_iorenumber(Shell_t*,int,int);
+ extern void 	sh_pclose(int[]);
+ extern int	sh_rpipe(int[]);
+diff --git a/src/cmd/ksh93/sh/init.c b/src/cmd/ksh93/sh/init.c
+index 4131666..7a933a2 100644
+--- a/src/cmd/ksh93/sh/init.c
++++ b/src/cmd/ksh93/sh/init.c
+@@ -1509,10 +1509,7 @@ Shell_t *sh_init(register int argc,register char *argv[], Shinit_f userinit)
+ 	else
+ 		sh_offoption(SH_PRIVILEGED);
+ 	/* shname for $0 in profiles and . scripts */
+-	if(sh_isdevfd(argv[1]))
+-		shp->shname = strdup(argv[0]);
+-	else
+-		shp->shname = strdup(shp->st.dolv[0]);
++	shp->shname = strdup(shp->st.dolv[0]);
+ 	/*
+ 	 * return here for shell script execution
+ 	 * but not for parenthesis subshells
+diff --git a/src/cmd/ksh93/sh/io.c b/src/cmd/ksh93/sh/io.c
+index 8beb60b..9f326bb 100644
+--- a/src/cmd/ksh93/sh/io.c
++++ b/src/cmd/ksh93/sh/io.c
+@@ -877,17 +877,17 @@ int sh_chkopen(register const char *name)
+ }
+ 
+ /*
+- * move open file descriptor to a number > 2
++ * move open file descriptor to a number >= minfd
+  */
+-int sh_iomovefd(register int fdold)
++int sh_iomovefd(register int fdold, int minfd)
+ {
+ 	Shell_t *shp = sh_getinterp();
+ 	register int fdnew;
+ 	if(fdold >= shp->gd->lim.open_max)
+ 		sh_iovalidfd(shp,fdold);
+-	if(fdold<0 || fdold>2)
++	if(fdold<0 || fdold>=minfd)
+ 		return(fdold);
+-	fdnew = sh_iomovefd(dup(fdold));
++	fdnew = sh_iomovefd(dup(fdold),minfd);
+ 	shp->fdstatus[fdnew] = (shp->fdstatus[fdold]&~IOCLEX);
+ 	close(fdold);
+ 	shp->fdstatus[fdold] = IOCLOSE;
+@@ -903,8 +903,8 @@ int	sh_pipe(register int pv[])
+ 	int fd[2];
+ 	if(pipe(fd)<0 || (pv[0]=fd[0])<0 || (pv[1]=fd[1])<0)
+ 		errormsg(SH_DICT,ERROR_system(1),e_pipe);
+-	pv[0] = sh_iomovefd(pv[0]);
+-	pv[1] = sh_iomovefd(pv[1]);
++	pv[0] = sh_iomovefd(pv[0],3);
++	pv[1] = sh_iomovefd(pv[1],3);
+ 	shp->fdstatus[pv[0]] = IONOSEEK|IOREAD;
+ 	shp->fdstatus[pv[1]] = IONOSEEK|IOWRITE;
+ 	sh_subsavefd(pv[0]);
+@@ -926,8 +926,8 @@ int	sh_pipe(register int pv[])
+ 	int fd[2];
+ 	if(pipe(fd)<0 || (pv[0]=fd[0])<0 || (pv[1]=fd[1])<0)
+ 		errormsg(SH_DICT,ERROR_system(1),e_pipe);
+-	pv[0] = sh_iomovefd(pv[0]);
+-	pv[1] = sh_iomovefd(pv[1]);
++	pv[0] = sh_iomovefd(pv[0],3);
++	pv[1] = sh_iomovefd(pv[1],3);
+ 	shp->fdstatus[pv[0]] = IONOSEEK|IOREAD;
+ 	shp->fdstatus[pv[1]] = IONOSEEK|IOWRITE;
+ 	sh_subsavefd(pv[0]);
+@@ -947,7 +947,7 @@ int	sh_pipe(register int pv[])
+ 	if((pv[out]=sh_fcntl(fd,F_DUPFD,10)) >=10)
+ 		sh_close(fd);
+ 	else
+-		pv[out] = sh_iomovefd(fd);
++		pv[out] = sh_iomovefd(fd,3);
+ 	if(fcntl(pv[out],F_SETFD,FD_CLOEXEC) >=0)
+ 		shp->fdstatus[pv[out]] |= IOCLEX;
+ 	shp->fdstatus[pv[out]] = (out?IOWRITE:IOREAD);
+@@ -1338,7 +1338,7 @@ int	sh_redirect(Shell_t *shp,struct ionod *iop, int flag)
+ 				if(flag==SH_SHOWME)
+ 					goto traceit;
+ 				fd=sh_chkopen(fname);
+-				fd=sh_iomovefd(fd);
++				fd=sh_iomovefd(fd,3);
+ 			}
+ 			else if(sh_isoption(SH_RESTRICTED))
+ 				errormsg(SH_DICT,ERROR_exit(1),e_restricted,fname);
+@@ -1540,7 +1540,7 @@ int	sh_redirect(Shell_t *shp,struct ionod *iop, int flag)
+ 				}
+ 				else
+ 				{
+-					fd = sh_iorenumber(shp,sh_iomovefd(fd),fn);
++					fd = sh_iorenumber(shp,sh_iomovefd(fd,3),fn);
+ 					if(fn>2 && fn<10)
+ 						shp->inuse_bits |= (1<<fn);
+ 				}
+diff --git a/src/cmd/ksh93/sh/main.c b/src/cmd/ksh93/sh/main.c
+index 00a048b..079c2fd 100644
+--- a/src/cmd/ksh93/sh/main.c
++++ b/src/cmd/ksh93/sh/main.c
+@@ -67,6 +67,9 @@ static void	chkmail(Shell_t *shp, char*);
+ static struct stat lastmail;
+ static time_t	mailtime;
+ static char	beenhere = 0;
++#if SHOPT_DEVFD
++#define GOT_DEVFD	2
++#endif
+ 
+ #ifdef _lib_sigvec
+     void clearsigmask(register int sig)
+@@ -160,8 +163,9 @@ int sh_main(int ac, char *av[], Shinit_f userinit)
+ #if SHOPT_BRACEPAT
+ 	sh_onoption(SH_BRACEEXPAND);
+ #endif
+-	if((beenhere++)==0)
++	if(!beenhere)
+ 	{
++		beenhere = 1;
+ 		sh_onstate(SH_PROFILE);
+ 		((Lex_t*)shp->lex_context)->nonstandard = 0;
+ 		if(shp->gd->ppid==1)
+@@ -257,21 +261,23 @@ int sh_main(int ac, char *av[], Shinit_f userinit)
+ 				fdin = 0;
+ 			else
+ 			{
+-				char *sp;
++#if SHOPT_DEVFD
+ 				/* open stream should have been passed into shell */
+-				if(strmatch(name,e_devfdNN))
++				if(strmatch(name,e_devfdNN) && (fdin=(int)strtol(name+8, NULL, 10)) > 2)
+ 				{
+-					fdin = (int)strtol(name+8, (char**)0, 10);
+ 					if(fstat(fdin,&statb)<0)
+ 						errormsg(SH_DICT,ERROR_system(1),e_open,name);
+ 					name = av[0];
+ 					sh_offoption(SH_VERBOSE);
+ 					sh_offoption(SH_XTRACE);
++					beenhere = GOT_DEVFD;
+ 				}
+ 				else
++#endif /* SHOPT_DEVFD */
+ 				{
++					char *sp;
+ 					int isdir = 0;
+-					if((fdin=sh_open(name,O_RDONLY,0))>=0 &&(fstat(fdin,&statb)<0 || S_ISDIR(statb.st_mode)))
++					if((fdin=sh_open(name,O_RDONLY|O_cloexec,0))>=0 &&(fstat(fdin,&statb)<0 || S_ISDIR(statb.st_mode)))
+ 					{
+ 						close(fdin);
+ 						isdir = 1;
+@@ -290,7 +296,7 @@ int sh_main(int ac, char *av[], Shinit_f userinit)
+ #endif
+ 						if(sp)
+ 						{
+-							if((fdin=sh_open(sp,O_RDONLY,0))>=0)
++							if((fdin=sh_open(sp,O_RDONLY|O_cloexec,0))>=0)
+ 								shp->st.filename = path_fullname(shp,sp);
+ 						}
+ 					}
+@@ -309,8 +315,14 @@ int sh_main(int ac, char *av[], Shinit_f userinit)
+ 							strcopy(name," \"$@\"");
+ 						goto shell_c;
+ 					}
+-					if(fdin==0)
+-						fdin = sh_iomovefd(fdin);
++					/*
++					 * Note: fdin could wind up being zero or some such if the
++					 *       shell was opened with stdin/stdout/stderr closed
++					 *       (i.e. 0>&-), so we move the fd in such a case to
++					 *       keep that file descriptor closed.
++					 */
++					if(fdin<=2)
++						fdin = sh_iomovefd(fdin,10);
+ 				}
+ 				shp->readscript = shp->shname;
+ 			}
+@@ -356,15 +368,27 @@ static void	exfile(register Shell_t *shp, register Sfio_t *iop,register int fno)
+ 	{
+ 		if(fno > 0)
+ 		{
+-			int r;
+-			if(fno < 10 && ((r=sh_fcntl(fno,F_DUPFD,10))>=10))
++#if SHOPT_DEVFD
++			if(beenhere == GOT_DEVFD)
++				; /* leave the inherited /dev/fd as is */
++			else
++#endif
+ 			{
+-				shp->fdstatus[r] = shp->fdstatus[fno];
+-				sh_close(fno);
+-				fno = r;
++			if(fno < 10)
++			{
++				int r = sh_fcntl(fno,F_DUPFD,10);
++				if(r >= 10)
++				{
++					shp->fdstatus[r] = shp->fdstatus[fno];
++					/* leave std* fds open when they're not explicitly closed */
++					if(fno > 2)
++						sh_close(fno);
++					fno = r;
++				}
+ 			}
+ 			fcntl(fno,F_SETFD,FD_CLOEXEC);
+ 			shp->fdstatus[fno] |= IOCLEX;
++			}
+ 			iop = sh_iostream((void*)shp,fno);
+ 		}
+ 		else
+@@ -372,6 +396,7 @@ static void	exfile(register Shell_t *shp, register Sfio_t *iop,register int fno)
+ 	}
+ 	else
+ 		fno = -1;
++	beenhere = 1;
+ 	shp->infd = fno;
+ 	if(sh_isstate(SH_INTERACTIVE))
+ 	{
+diff --git a/src/cmd/ksh93/sh/path.c b/src/cmd/ksh93/sh/path.c
+index 993bdfd..05cd956 100644
+--- a/src/cmd/ksh93/sh/path.c
++++ b/src/cmd/ksh93/sh/path.c
+@@ -525,7 +525,7 @@ static int	path_opentype(Shell_t *shp,const char *name, register Pathcomp_t *pp,
+ 		}
+ 	}
+ 	while( fd<0 && pp);
+-	if(fd>=0 && (fd = sh_iomovefd(fd)) > 0)
++	if(fd>=0 && (fd = sh_iomovefd(fd,10)) > 0)
+ 	{
+ 		fcntl(fd,F_SETFD,FD_CLOEXEC);
+ 		shp->fdstatus[fd] |= IOCLEX;
+@@ -1280,7 +1280,7 @@ static void exscript(Shell_t *shp,register char *path,register char *argv[],char
+ 		if((n=sh_open(path,O_RDONLY,0)) >= 0)
+ 		{
+ 			/* move <n> if n=0,1,2 */
+-			n = sh_iomovefd(n);
++			n = sh_iomovefd(n,10);
+ 			if(fstat(n,&statb)>=0 && !(statb.st_mode&(S_ISUID|S_ISGID)))
+ 				goto openok;
+ 			sh_close(n);
+@@ -1321,7 +1321,7 @@ static void exscript(Shell_t *shp,register char *path,register char *argv[],char
+ 	if((shp->infd = sh_open(path,O_RDONLY,0)) < 0)
+ 		errormsg(SH_DICT,ERROR_system(ERROR_NOEXEC),e_exec,path);
+ #endif
+-	shp->infd = sh_iomovefd(shp->infd);
++	shp->infd = sh_iomovefd(shp->infd,10);
+ #if SHOPT_ACCT
+ 	sh_accbegin(path) ;  /* reset accounting */
+ #endif	/* SHOPT_ACCT */
+diff --git a/src/cmd/ksh93/tests/basic.sh b/src/cmd/ksh93/tests/basic.sh
+index 1cab8e0..d09ede2 100755
+--- a/src/cmd/ksh93/tests/basic.sh
++++ b/src/cmd/ksh93/tests/basic.sh
+@@ -514,4 +514,14 @@ $SHELL -xc '$(LD_LIBRARY_PATH=$LD_LIBRARY_PATH exec $SHELL -c :)' > /dev/null 2>
+ 
+ $SHELL 2> /dev/null -c $'for i;\ndo :;done' || err_exit 'for i ; <newline> not vaid'
+ 
++# ======
++# $0 should be the /dev/fd path for scripts executed from a /dev/fd file
++# https://github.com/ksh93/ksh/issues/874
++# https://github.com/ksh93/ksh/pull/879
++if	((SHOPT_DEVFD))
++then	got=$("$SHELL" <(echo 'echo $0'))
++	[[ ${got:0:7} != '/dev/fd' ]] && err_exit '$0 is wrong for process substitution scripts' \\
++		"(expected a /dev/fd file name, got $(printf %q "$got"))"
++fi
++
+ exit $((Errors<125?Errors:125))

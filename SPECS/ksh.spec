@@ -6,7 +6,7 @@ Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Version:      %{releasedate}
-Release:      270%{?dist}
+Release:      271%{?dist}
 Source0:      http://www.research.att.com/~gsf/download/tgz/ast-ksh.%{release_date}.tgz
 Source1:      http://www.research.att.com/~gsf/download/tgz/INIT.%{release_date}.tgz
 Source2:      kshcomp.conf
@@ -267,6 +267,10 @@ Patch101: ksh-1.0.11-ssh-multibyte-long-paste.patch
 # https://github.com/ksh93/ksh/commit/970812e39c236ff385e440ac6d458d196c237667
 Patch102: ksh-1.0.12-security.patch
 
+# upstream commit: https://github.com/ksh93/ksh/commit/c2cfcfc6f4b2d63472b2290debb9d0bb84c932df
+# Fix $0 reporting /usr/bin/ksh instead of script name for /dev/fd scripts
+Patch103: ksh-1.0.11-devfd-memory-fault.patch
+
 Conflicts:    pdksh
 Requires: coreutils, diffutils, chkconfig
 BuildRequires: bison
@@ -420,6 +424,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Mon Feb 09 2026 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-271
+- Fix $0 reporting /usr/bin/ksh instead of script name for /dev/fd scripts
+  Resolves: RHEL-92633
+
 * Mon Jul 21 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-270
 - Fix arbitrary command execution/code injection bugs
   RHEL-92629
