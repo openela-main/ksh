@@ -4,7 +4,7 @@ URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Epoch:        3
 Version:      1.0.6
-Release:      14%{?dist}
+Release:      15%{?dist}
 Source0:      https://github.com/ksh93/%{name}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:      kshcomp.conf
 Source2:      kshrc.rhs
@@ -59,6 +59,9 @@ Patch14: ksh-1.0.10-sigpipe.patch
 
 # https://github.com/ksh93/ksh/commit/970812e39c236ff385e440ac6d458d196c237667
 Patch15: ksh-1.0.12-security.patch
+
+# upstream commit: https://github.com/ksh93/ksh/commit/c2cfcfc6f4b2d63472b2290debb9d0bb84c932df
+Patch16: ksh-1.0.11-devfd-memory-fault.patch
 
 Conflicts:    pdksh
 Requires: coreutils, diffutils
@@ -181,6 +184,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Wed Feb 04 2026 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-15
+- Fix /dev/fd/1 memory fault and $0 for /dev/fd scripts
+  Resolves: RHEL-146564
+
 * Wed Aug 06 2025 Vincent Mihalkovic <vmihalko@redhat.com> - 3:1.0.6-14
 - Fix arbitrary command execution/code injection bugs
   Resolves: RHEL-99063
