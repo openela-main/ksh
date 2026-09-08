@@ -6,7 +6,7 @@ Summary:      The Original ATT Korn Shell
 URL:          http://www.kornshell.com/
 License:      EPL-1.0
 Version:      %{releasedate}
-Release:      271%{?dist}
+Release:      272%{?dist}
 Source0:      http://www.research.att.com/~gsf/download/tgz/ast-ksh.%{release_date}.tgz
 Source1:      http://www.research.att.com/~gsf/download/tgz/INIT.%{release_date}.tgz
 Source2:      kshcomp.conf
@@ -424,6 +424,10 @@ fi
 %config(noreplace) %{_sysconfdir}/binfmt.d/kshcomp.conf
 
 %changelog
+* Tue Aug 11 2026 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-272
+- Fix /dev/fd script redirection failure with iomovefd fd range
+  Resolves: RHEL-188169
+
 * Mon Feb 09 2026 Vincent Mihalkovic <vmihalko@redhat.com> - 20120801-271
 - Fix $0 reporting /usr/bin/ksh instead of script name for /dev/fd scripts
   Resolves: RHEL-92633

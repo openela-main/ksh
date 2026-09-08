@@ -224,7 +224,7 @@ index 00a048b..079c2fd 100644
 +					 *       keep that file descriptor closed.
 +					 */
 +					if(fdin<=2)
-+						fdin = sh_iomovefd(fdin,10);
++						fdin = sh_iomovefd(fdin,3);
  				}
  				shp->readscript = shp->shname;
  			}
@@ -278,7 +278,7 @@ index 993bdfd..05cd956 100644
  	}
  	while( fd<0 && pp);
 -	if(fd>=0 && (fd = sh_iomovefd(fd)) > 0)
-+	if(fd>=0 && (fd = sh_iomovefd(fd,10)) > 0)
++	if(fd>=0 && (fd = sh_iomovefd(fd,3)) > 0)
  	{
  		fcntl(fd,F_SETFD,FD_CLOEXEC);
  		shp->fdstatus[fd] |= IOCLEX;
@@ -287,7 +287,7 @@ index 993bdfd..05cd956 100644
  		{
  			/* move <n> if n=0,1,2 */
 -			n = sh_iomovefd(n);
-+			n = sh_iomovefd(n,10);
++			n = sh_iomovefd(n,3);
  			if(fstat(n,&statb)>=0 && !(statb.st_mode&(S_ISUID|S_ISGID)))
  				goto openok;
  			sh_close(n);
@@ -296,7 +296,7 @@ index 993bdfd..05cd956 100644
  		errormsg(SH_DICT,ERROR_system(ERROR_NOEXEC),e_exec,path);
  #endif
 -	shp->infd = sh_iomovefd(shp->infd);
-+	shp->infd = sh_iomovefd(shp->infd,10);
++	shp->infd = sh_iomovefd(shp->infd,3);
  #if SHOPT_ACCT
  	sh_accbegin(path) ;  /* reset accounting */
  #endif	/* SHOPT_ACCT */
